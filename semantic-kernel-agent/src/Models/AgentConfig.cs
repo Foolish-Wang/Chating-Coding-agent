@@ -1,6 +1,9 @@
-public class AgentConfig
+namespace SemanticKernelAgent.Models
 {
-    public string AgentName { get; set; }
-    public string ApiKey { get; set; }
-    public string Endpoint { get; set; }
+    public class AgentConfig
+    {
+        public string ApiKey { get; set; } = string.Empty;
+        public string ModelId { get; set; } = string.Empty;
+        public string Endpoint { get; set; } = string.Empty;
+    }
 }
