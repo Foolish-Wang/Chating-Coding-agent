@@ -40,8 +40,9 @@ namespace SemanticKernelAgent
             // 添加插件
             kernel.Plugins.AddFromType<FilePlugin>("FileOperations");
             kernel.Plugins.AddFromType<WebPlugin>("WebOperations");
+            kernel.Plugins.AddFromType<CliPlugin>("CliOperations");
 
-            Console.WriteLine("Agent is ready with file and web capabilities! Type 'exit' to quit.");
+            Console.WriteLine("Agent is ready with file, web and CLI capabilities! Type 'exit' to quit.");
 
             // 聊天循环
             var chatService = kernel.GetRequiredService<IChatCompletionService>();
