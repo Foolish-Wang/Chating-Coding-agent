@@ -49,10 +49,12 @@ namespace SemanticKernelAgent
             var chatService = kernel.GetRequiredService<IChatCompletionService>();
             var chatHistory = new ChatHistory();
 
-            // 创建执行设置，启用自动函数调用
+            // 创建执行设置，启用自动函数调用，添加超时设置
             var executionSettings = new OpenAIPromptExecutionSettings()
             {
-                ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions
+                ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions,
+                MaxTokens = 4000,
+                Temperature = 0.7
             };
 
             while (true)
@@ -67,20 +69,38 @@ namespace SemanticKernelAgent
                 
                 try
                 {
+                    Console.WriteLine("Processing your request...");
                     chatHistory.AddUserMessage(input);
                     
-                    // 使用正确的参数顺序和类型
-                    var response = await chatService.GetChatMessageContentAsync(
+                    // 添加超时控制
+                    var timeoutTask = Task.Delay(TimeSpan.FromMinutes(2));
+                    var responseTask = chatService.GetChatMessageContentAsync(
                         chatHistory, 
                         executionSettings,
                         kernel);
+
+                    var completedTask = await Task.WhenAny(responseTask, timeoutTask);
                     
+                    if (completedTask == timeoutTask)
+                    {
+                        Console.WriteLine("AI > 请求超时，请稍后再试。");
+                        continue;
+                    }
+
+                    var response = await responseTask;
                     Console.WriteLine($"AI > {response.Content}");
                     chatHistory.AddAssistantMessage(response.Content!);
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Error: {ex.Message}");
+                    Console.WriteLine($"Stack trace: {ex.StackTrace}");
+                    
+                    // 清除最后一条用户消息，避免重复处理
+                    if (chatHistory.Count > 0)
+                    {
+                        chatHistory.RemoveAt(chatHistory.Count - 1);
+                    }
                 }
             }
 
