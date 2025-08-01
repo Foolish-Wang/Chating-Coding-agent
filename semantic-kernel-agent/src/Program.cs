@@ -29,7 +29,7 @@ namespace SemanticKernelAgent
                 throw new InvalidOperationException("DEEPSEEK_API_KEY not found in environment variables");
             }
 
-            // 创建内核
+            // 创建内核并添加插件
             var kernel = Kernel.CreateBuilder()
                 .AddOpenAIChatCompletion(
                     modelId: config.ModelId, 
@@ -37,7 +37,11 @@ namespace SemanticKernelAgent
                     endpoint: new Uri(config.Endpoint))
                 .Build();
 
-            Console.WriteLine("Agent is ready! Type 'exit' to quit.");
+            // 添加插件
+            kernel.Plugins.AddFromType<FilePlugin>("FileOperations");
+            kernel.Plugins.AddFromType<WebPlugin>("WebOperations");
+
+            Console.WriteLine("Agent is ready with file and web capabilities! Type 'exit' to quit.");
 
             // 聊天循环
             var chatService = kernel.GetRequiredService<IChatCompletionService>();
@@ -56,7 +60,11 @@ namespace SemanticKernelAgent
                 try
                 {
                     chatHistory.AddUserMessage(input);
-                    var response = await chatService.GetChatMessageContentAsync(chatHistory);
+                    
+                    // 使用自动函数调用
+                    var response = await chatService.GetChatMessageContentAsync(
+                        chatHistory, 
+                        kernel: kernel);
                     
                     Console.WriteLine($"AI > {response.Content}");
                     chatHistory.AddAssistantMessage(response.Content!);
