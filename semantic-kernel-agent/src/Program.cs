@@ -2,6 +2,7 @@ using System;
 using System.Threading.Tasks;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
+using Microsoft.SemanticKernel.Connectors.OpenAI;
 using DotNetEnv;
 using SemanticKernelAgent.Models;
 
@@ -48,6 +49,12 @@ namespace SemanticKernelAgent
             var chatService = kernel.GetRequiredService<IChatCompletionService>();
             var chatHistory = new ChatHistory();
 
+            // 创建执行设置，启用自动函数调用
+            var executionSettings = new OpenAIPromptExecutionSettings()
+            {
+                ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions
+            };
+
             while (true)
             {
                 Console.Write("User > ");
@@ -62,10 +69,11 @@ namespace SemanticKernelAgent
                 {
                     chatHistory.AddUserMessage(input);
                     
-                    // 使用自动函数调用
+                    // 使用正确的参数顺序和类型
                     var response = await chatService.GetChatMessageContentAsync(
                         chatHistory, 
-                        kernel: kernel);
+                        executionSettings,
+                        kernel);
                     
                     Console.WriteLine($"AI > {response.Content}");
                     chatHistory.AddAssistantMessage(response.Content!);
