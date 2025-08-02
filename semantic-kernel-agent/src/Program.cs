@@ -72,29 +72,21 @@ namespace SemanticKernelAgent
                     Console.WriteLine("Processing your request...");
                     chatHistory.AddUserMessage(input);
                     
-                    // 添加超时控制
-                    var timeoutTask = Task.Delay(TimeSpan.FromMinutes(2));
-                    var responseTask = chatService.GetChatMessageContentAsync(
+                    // 移除超时控制，让AI完成任务
+                    var response = await chatService.GetChatMessageContentAsync(
                         chatHistory, 
                         executionSettings,
                         kernel);
 
-                    var completedTask = await Task.WhenAny(responseTask, timeoutTask);
-                    
-                    if (completedTask == timeoutTask)
-                    {
-                        Console.WriteLine("AI > 请求超时，请稍后再试。");
-                        continue;
-                    }
-
-                    var response = await responseTask;
                     Console.WriteLine($"AI > {response.Content}");
                     chatHistory.AddAssistantMessage(response.Content!);
+                    
+                    // 任务完成后，提示等待下一个命令
+                    Console.WriteLine("\n--- Task completed. Ready for your next command ---\n");
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"Error: {ex.Message}");
-                    Console.WriteLine($"Stack trace: {ex.StackTrace}");
                     
                     // 清除最后一条用户消息，避免重复处理
                     if (chatHistory.Count > 0)
