@@ -6,6 +6,8 @@ using System.Threading.Tasks;
 using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Linq;
+using System.Net.Http.Headers;
+using System.Runtime.InteropServices;
 
 public class WebPlugin
 {
@@ -88,5 +90,73 @@ public class WebPlugin
     public string GetCurrentDateTime()
     {
         return DateTime.Now.ToString("yyyy年MM月dd日 HH:mm:ss");
+    }
+
+    [KernelFunction]
+    [Description("下载图片或文件到本地")]
+    public async Task<string> DownloadFileAsync(string url, string localPath)
+    {
+        try
+        {
+            var response = await _httpClient.GetAsync(url);
+            response.EnsureSuccessStatusCode();
+            
+            var directory = Path.GetDirectoryName(localPath);
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            {
+                Directory.CreateDirectory(directory);
+            }
+            
+            await using var fileStream = File.Create(localPath);
+            await response.Content.CopyToAsync(fileStream);
+            
+            var fileInfo = new FileInfo(localPath);
+            return $"文件下载成功: {localPath}\n大小: {fileInfo.Length} 字节";
+        }
+        catch (Exception ex)
+        {
+            return $"下载文件失败: {ex.Message}";
+        }
+    }
+
+    [KernelFunction]
+    [Description("获取图片信息")]
+    public async Task<string> GetImageInfoAsync(string imageUrl)
+    {
+        try
+        {
+            var response = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, imageUrl));
+            response.EnsureSuccessStatusCode();
+            
+            var contentType = response.Content.Headers.ContentType?.MediaType ?? "未知";
+            var contentLength = response.Content.Headers.ContentLength ?? 0;
+            
+            return $"图片URL: {imageUrl}\n" +
+                   $"内容类型: {contentType}\n" +
+                   $"文件大小: {contentLength} 字节\n" +
+                   $"状态: {response.StatusCode}";
+        }
+        catch (Exception ex)
+        {
+            return $"获取图片信息失败: {ex.Message}";
+        }
+    }
+
+    [KernelFunction]
+    [Description("获取图片下载的CLI命令参考（当WebPlugin方法失败时的备选方案）")]
+    public string GetImageDownloadCommands()
+    {
+        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        {
+            return @"Windows图片下载命令：
+- PowerShell: Invoke-WebRequest -Uri 'https://example.com/image.jpg' -OutFile 'local_image.jpg'
+- curl: curl -o local_image.jpg https://example.com/image.jpg";
+        }
+        else
+        {
+            return @"Unix/Linux图片下载命令：
+- wget: wget https://example.com/image.jpg -O local_image.jpg
+- curl: curl -o local_image.jpg https://example.com/image.jpg";
+        }
     }
 }

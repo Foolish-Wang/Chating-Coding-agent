@@ -16,7 +16,7 @@ namespace SemanticKernelAgent
             // 加载环境变量
             Env.Load();
 
-            Console.WriteLine("Initializing Semantic Kernel Agent...");
+            Console.WriteLine("正在初始化 Semantic Kernel Agent...");
 
             // 从环境变量创建配置
             var config = new AgentConfig
@@ -48,7 +48,7 @@ namespace SemanticKernelAgent
             // 添加ReAct模式的函数调用监控
             kernel.FunctionInvocationFilters.Add(new ReActLoggingFilter());
 
-            Console.WriteLine("Agent is ready with file, web and CLI capabilities! Type 'exit' to quit.");
+            Console.WriteLine("AI已经准备就绪，可以开始处理任务。输入 'exit' 退出程序。");
 
             // 聊天循环
             var chatService = kernel.GetRequiredService<IChatCompletionService>();
@@ -62,8 +62,6 @@ namespace SemanticKernelAgent
                 Temperature = 1
             };
 
-            // 移除过时的事件处理器，暂时不添加Filter
-            // 后续可以按照官方示例添加Filter来监控函数调用
 
             // 在第一次用户输入前添加系统上下文
             // 修改系统上下文，强制要求联网搜索
@@ -76,13 +74,20 @@ namespace SemanticKernelAgent
 - 搜索步骤是强制性的，不能跳过
 - 基于搜索结果创建内容，而不是使用训练数据
 
+## 图片处理能力：
+- 可以使用WebOperations.DownloadFileAsync下载图片
+- 可以使用WebOperations.GetImageInfoAsync获取图片信息
+- 可以使用CliOperations调用curl/wget下载图片
+- 支持常见图片格式：jpg, png, gif, webp等
+
 ## 工作流程（严格遵守）：
 1. 分析用户需求
 2. 如果涉及时间信息，先获取当前日期时间  
 3. 如果需要资料信息，必须先调用WebOperations.SearchAsync搜索相关内容
-4. 基于搜索结果整理信息
-5. 创建文件或页面
-6. 使用适当的CLI命令完成任务
+4. 如果需要图片，使用WebOperations.DownloadFileAsync下载
+5. 基于搜索结果整理信息
+6. 创建文件或页面
+7. 使用适当的CLI命令完成任务
 
 ## 技术规范：
 - 请在执行任何命令前先了解系统环境
@@ -90,6 +95,7 @@ namespace SemanticKernelAgent
 - Windows使用PowerShell或CMD，Unix使用bash
 - 执行命令前可以检查程序是否已安装
 - 请尽量使用CLI命令来完成任务
+- 处理图片时注意文件路径和格式
 
 ## 搜索要求：
 - 搜索关键词要具体和相关
@@ -121,8 +127,8 @@ namespace SemanticKernelAgent
 
                     Console.WriteLine($"AI > {response.Content}");
                     chatHistory.AddAssistantMessage(response.Content!);
-                    
-                    Console.WriteLine("\n--- Task completed. Ready for your next command ---\n");
+
+                    Console.WriteLine("\n--- 任务完成，准备好接受下一个命令 ---\n");
                 }
                 catch (Exception ex)
                 {
