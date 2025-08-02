@@ -4,6 +4,7 @@ using System.ComponentModel;
 using System.Diagnostics;
 using System.Threading.Tasks;
 using System.Runtime.InteropServices;
+using System.Text;
 
 public class CliPlugin
 {
@@ -76,33 +77,73 @@ public class CliPlugin
     }
 
     [KernelFunction]
-    [Description("智能执行命令（自动选择最佳工具）")]
-    public async Task<string> SmartExecuteAsync(string command, string workingDirectory = "")
+    [Description("智能执行系统命令，自动处理错误")]
+    public async Task<string> SmartExecuteAsync(string command)
     {
         try
         {
-            // 根据操作系统选择合适的执行方式
+            // Windows系统使用更干净的执行方式
             if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
             {
-                // Windows优先使用PowerShell
-                if (command.StartsWith("start ") || command.Contains("Get-") || command.Contains("Set-"))
+                // 使用 -NoProfile 避免配置文件错误
+                var cleanCommand = $"powershell -NoProfile -Command \"{command}\"";
+
+                var processInfo = new ProcessStartInfo("cmd", $"/c {cleanCommand}")
                 {
-                    return await ExecutePowerShellAsync(command, workingDirectory);
-                }
-                else
-                {
-                    return await ExecuteCommandAsync(command, workingDirectory);
-                }
+                    UseShellExecute = false,
+                    RedirectStandardOutput = true,
+                    RedirectStandardError = true,
+                    CreateNoWindow = true,
+                    // 设置编码避免乱码
+                    StandardOutputEncoding = Encoding.UTF8,
+                    StandardErrorEncoding = Encoding.UTF8
+                };
+
+                using var process = Process.Start(processInfo);
+                var output = await process.StandardOutput.ReadToEndAsync();
+                var error = await process.StandardError.ReadToEndAsync();
+
+                await process.WaitForExitAsync();
+
+                var result = $"退出代码: {process.ExitCode}";
+                if (!string.IsNullOrEmpty(output))
+                    result += $"\n输出:\n{output}";
+                if (!string.IsNullOrEmpty(error))
+                    result += $"\n警告:\n{error}";
+
+                return result;
             }
-            else
-            {
-                // Unix系统使用标准shell
-                return await ExecuteCommandAsync(command, workingDirectory);
-            }
+
+            // Unix系统处理...
+            return await ExecuteUnixCommand(command);
         }
         catch (Exception ex)
         {
-            return $"智能执行命令失败: {ex.Message}";
+            return $"执行失败: {ex.Message}";
         }
+    }
+
+    private async Task<string> ExecuteUnixCommand(string command)
+    {
+        var processInfo = new ProcessStartInfo("/bin/bash", $"-c \"{command}\"")
+        {
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+
+        using var process = Process.Start(processInfo);
+        if (process == null) return "无法启动进程";
+
+        var output = await process.StandardOutput.ReadToEndAsync();
+        var error = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+
+        var result = $"退出代码: {process.ExitCode}\n";
+        if (!string.IsNullOrEmpty(output)) result += $"输出:\n{output}\n";
+        if (!string.IsNullOrEmpty(error)) result += $"错误:\n{error}";
+
+        return result;
     }
 }
