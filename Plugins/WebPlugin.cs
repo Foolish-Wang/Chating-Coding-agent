@@ -8,83 +8,305 @@ using System.Text.RegularExpressions;
 using System.Linq;
 using System.Net.Http.Headers;
 using System.Runtime.InteropServices;
+using System.Collections.Generic;
 
 public class WebPlugin
 {
     private readonly HttpClient _httpClient;
+    private readonly List<string> _userAgents;
+    private int _currentUserAgentIndex = 0;
 
     public WebPlugin()
     {
         _httpClient = new HttpClient();
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", 
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
+        _httpClient.Timeout = TimeSpan.FromSeconds(30);
+        
+        // 多个User-Agent轮换使用
+        _userAgents = new List<string>
+        {
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        };
+        
+        SetUserAgent();
     }
 
-    [KernelFunction]
-    [Description("获取网页内容（完整版本）")]
-    public async Task<string> GetWebPageAsync(string url, int maxLength = 10000)
+    private void SetUserAgent()
     {
-        try
-        {
-            var response = await _httpClient.GetStringAsync(url);
-            return response.Length > maxLength ? response.Substring(0, maxLength) + "..." : response;
-        }
-        catch (Exception ex)
-        {
-            return $"获取网页失败: {ex.Message}";
-        }
+        _httpClient.DefaultRequestHeaders.Clear();
+        _httpClient.DefaultRequestHeaders.Add("User-Agent", _userAgents[_currentUserAgentIndex]);
+        _httpClient.DefaultRequestHeaders.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
+        _httpClient.DefaultRequestHeaders.Add("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
+        _httpClient.DefaultRequestHeaders.Add("Accept-Encoding", "gzip, deflate, br");
+        _httpClient.DefaultRequestHeaders.Add("Connection", "keep-alive");
+        _httpClient.DefaultRequestHeaders.Add("Upgrade-Insecure-Requests", "1");
     }
 
     [KernelFunction]
-    [Description("提取网页文本内容（去除HTML标签）")]
-    public async Task<string> GetWebPageTextAsync(string url)
-    {
-        try
-        {
-            var html = await _httpClient.GetStringAsync(url);
-            
-            // 移除脚本和样式标签
-            html = Regex.Replace(html, @"<script[^>]*>.*?</script>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
-            html = Regex.Replace(html, @"<style[^>]*>.*?</style>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
-            
-            // 移除所有HTML标签
-            var text = Regex.Replace(html, @"<[^>]+>", " ");
-            
-            // 清理多余空白
-            text = Regex.Replace(text, @"\s+", " ").Trim();
-            
-            return text.Length > 8000 ? text.Substring(0, 8000) + "..." : text;
-        }
-        catch (Exception ex)
-        {
-            return $"提取网页文本失败: {ex.Message}";
-        }
-    }
-
-    [KernelFunction]
-    [Description("搜索网络信息（使用DuckDuckGo）")]
+    [Description("智能搜索网络信息，自动尝试多个搜索引擎和备用方案")]
     public async Task<string> SearchAsync(string query)
     {
+        var searchEngines = new[]
+        {
+            new { Name = "DuckDuckGo", Url = $"https://html.duckduckgo.com/html/?q={Uri.EscapeDataString(query)}" },
+            new { Name = "Bing", Url = $"https://www.bing.com/search?q={Uri.EscapeDataString(query)}" },
+            new { Name = "百度", Url = $"https://www.baidu.com/s?wd={Uri.EscapeDataString(query)}" }
+        };
+
+        var results = new List<string>();
+        
+        foreach (var engine in searchEngines)
+        {
+            try
+            {
+                Console.WriteLine($"🔍 尝试使用 {engine.Name} 搜索...");
+                
+                // 每次尝试都换一个User-Agent
+                _currentUserAgentIndex = (_currentUserAgentIndex + 1) % _userAgents.Count;
+                SetUserAgent();
+                
+                await Task.Delay(1000); // 延迟避免频率限制
+                
+                var html = await _httpClient.GetStringAsync(engine.Url);
+                
+                if (engine.Name == "DuckDuckGo")
+                {
+                    var links = ExtractDuckDuckGoResults(html);
+                    if (links.Any())
+                    {
+                        results.Add($"=== {engine.Name} 搜索结果 ===\n" + string.Join("\n\n", links));
+                        break; // 成功就不再尝试其他搜索引擎
+                    }
+                }
+                else if (engine.Name == "Bing")
+                {
+                    var links = ExtractBingResults(html);
+                    if (links.Any())
+                    {
+                        results.Add($"=== {engine.Name} 搜索结果 ===\n" + string.Join("\n\n", links));
+                        break;
+                    }
+                }
+                else if (engine.Name == "百度")
+                {
+                    var links = ExtractBaiduResults(html);
+                    if (links.Any())
+                    {
+                        results.Add($"=== {engine.Name} 搜索结果 ===\n" + string.Join("\n\n", links));
+                        break;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ {engine.Name} 搜索失败: {ex.Message}");
+                continue;
+            }
+        }
+
+        if (results.Any())
+        {
+            return string.Join("\n\n", results);
+        }
+        
+        // 如果所有搜索引擎都失败，返回建议
+        return $"所有搜索引擎都无法访问。建议：\n" +
+               $"1. 检查网络连接\n" +
+               $"2. 尝试具体的关键词：{query}\n" +
+               $"3. 可以直接提供相关网站URL";
+    }
+
+    [KernelFunction]
+    [Description("智能获取网页内容，自动重试和备用方案")]
+    public async Task<string> GetWebPageTextAsync(string url)
+    {
+        var maxRetries = 3;
+        
+        for (int attempt = 0; attempt < maxRetries; attempt++)
+        {
+            try
+            {
+                // 每次重试都更换User-Agent
+                _currentUserAgentIndex = (_currentUserAgentIndex + 1) % _userAgents.Count;
+                SetUserAgent();
+                
+                if (attempt > 0)
+                {
+                    Console.WriteLine($"🔄 第 {attempt + 1} 次尝试访问: {url}");
+                    await Task.Delay(2000 * attempt); // 递增延迟
+                }
+                
+                var html = await _httpClient.GetStringAsync(url);
+                
+                // 移除脚本和样式标签
+                html = Regex.Replace(html, @"<script[^>]*>.*?</script>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+                html = Regex.Replace(html, @"<style[^>]*>.*?</style>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
+                
+                // 移除所有HTML标签
+                var text = Regex.Replace(html, @"<[^>]+>", " ");
+                
+                // 清理多余空白
+                text = Regex.Replace(text, @"\s+", " ").Trim();
+                
+                var result = text.Length > 8000 ? text.Substring(0, 8000) + "..." : text;
+                
+                if (string.IsNullOrWhiteSpace(result) || result.Length < 100)
+                {
+                    throw new Exception("页面内容过少或为空");
+                }
+                
+                return result;
+            }
+            catch (HttpRequestException ex) when (ex.Message.Contains("403"))
+            {
+                Console.WriteLine($"❌ 访问被拒绝 (403): {url}");
+                if (attempt == maxRetries - 1)
+                {
+                    return await TryAlternativeAccess(url);
+                }
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ 第 {attempt + 1} 次尝试失败: {ex.Message}");
+                if (attempt == maxRetries - 1)
+                {
+                    return await TryAlternativeAccess(url);
+                }
+            }
+        }
+        
+        return $"无法访问网页: {url}";
+    }
+
+    [KernelFunction]
+    [Description("当网页访问失败时，提供替代搜索建议")]
+    public async Task<string> GetAlternativeSearchSuggestions(string originalUrl, string searchQuery)
+    {
+        var suggestions = new List<string>();
+        
+        // 分析URL，提取关键信息
+        var domain = ExtractDomain(originalUrl);
+        var keywords = ExtractKeywordsFromUrl(originalUrl);
+        
+        suggestions.Add($"原始网页 {originalUrl} 访问失败，建议替代方案：");
+        suggestions.Add("");
+        
+        // 基于域名的替代建议
+        if (domain.Contains("zhihu"))
+        {
+            suggestions.Add("1. 尝试搜索知乎相关内容：");
+            await Task.Delay(500);
+            var zhihuSearch = await SearchAsync($"{searchQuery} site:zhihu.com");
+            suggestions.Add(zhihuSearch);
+        }
+        else if (domain.Contains("baidu") || domain.Contains("google"))
+        {
+            suggestions.Add("1. 搜索引擎结果页面访问失败，尝试直接搜索：");
+            var directSearch = await SearchAsync(searchQuery);
+            suggestions.Add(directSearch);
+        }
+        else
+        {
+            suggestions.Add($"1. 尝试搜索相关主题：{searchQuery}");
+            var relatedSearch = await SearchAsync($"{searchQuery} {keywords}");
+            suggestions.Add(relatedSearch);
+        }
+        
+        suggestions.Add("");
+        suggestions.Add("2. 建议手动搜索关键词:");
+        suggestions.Add($"   - {searchQuery}");
+        suggestions.Add($"   - {keywords}");
+        suggestions.Add($"   - {domain} {searchQuery}");
+        
+        return string.Join("\n", suggestions);
+    }
+
+    // 私有辅助方法
+    private async Task<string> TryAlternativeAccess(string url)
+    {
         try
         {
-            var searchUrl = $"https://html.duckduckgo.com/html/?q={Uri.EscapeDataString(query)}";
-            var html = await _httpClient.GetStringAsync(searchUrl);
+            // 尝试使用Web Archive (Wayback Machine)
+            var archiveUrl = $"https://web.archive.org/web/{url}";
+            Console.WriteLine($"🔄 尝试访问存档版本: {archiveUrl}");
             
-            // 简单提取搜索结果链接
-            var links = Regex.Matches(html, @"<a[^>]+href=""([^""]+)""[^>]*>([^<]+)</a>")
-                .Cast<Match>()
-                .Take(5)
-                .Select(m => $"链接: {m.Groups[2].Value.Trim()}\nURL: {m.Groups[1].Value}")
-                .ToArray();
+            var html = await _httpClient.GetStringAsync(archiveUrl);
+            var text = Regex.Replace(html, @"<[^>]+>", " ");
+            text = Regex.Replace(text, @"\s+", " ").Trim();
             
-            return links.Length > 0 ? string.Join("\n\n", links) : "未找到搜索结果";
+            if (text.Length > 100)
+            {
+                return $"[存档版本] {text.Substring(0, Math.Min(5000, text.Length))}...";
+            }
         }
-        catch (Exception ex)
+        catch
         {
-            return $"搜索失败: {ex.Message}，请尝试提供具体的URL";
+            // 存档也失败了
+        }
+        
+        return $"❌ 网页 {url} 访问失败 (403 Forbidden)。\n" +
+               $"可能原因：\n" +
+               $"1. 网站有反爬虫保护\n" +
+               $"2. 需要登录或特殊权限\n" +
+               $"3. 地区访问限制\n\n" +
+               $"建议：提供其他相关网站或具体搜索关键词";
+    }
+
+    private string[] ExtractDuckDuckGoResults(string html)
+    {
+        return Regex.Matches(html, @"<a[^>]+href=""([^""]+)""[^>]*class=""result__a""[^>]*>([^<]+)</a>")
+            .Cast<Match>()
+            .Take(5)
+            .Select(m => $"标题: {m.Groups[2].Value.Trim()}\nURL: {m.Groups[1].Value}")
+            .ToArray();
+    }
+
+    private string[] ExtractBingResults(string html)
+    {
+        return Regex.Matches(html, @"<h2><a[^>]+href=""([^""]+)""[^>]*>([^<]+)</a></h2>")
+            .Cast<Match>()
+            .Take(5)
+            .Select(m => $"标题: {m.Groups[2].Value.Trim()}\nURL: {m.Groups[1].Value}")
+            .ToArray();
+    }
+
+    private string[] ExtractBaiduResults(string html)
+    {
+        return Regex.Matches(html, @"<h3[^>]*><a[^>]+href=""([^""]+)""[^>]*>([^<]+)</a></h3>")
+            .Cast<Match>()
+            .Take(5)
+            .Select(m => $"标题: {m.Groups[2].Value.Trim()}\nURL: {m.Groups[1].Value}")
+            .ToArray();
+    }
+
+    private string ExtractDomain(string url)
+    {
+        try
+        {
+            var uri = new Uri(url);
+            return uri.Host;
+        }
+        catch
+        {
+            return "";
         }
     }
 
+    private string ExtractKeywordsFromUrl(string url)
+    {
+        // 简单提取URL中的关键词
+        var keywords = Regex.Matches(url, @"[a-zA-Z\u4e00-\u9fa5]{3,}")
+            .Cast<Match>()
+            .Select(m => m.Value)
+            .Take(3)
+            .ToArray();
+        
+        return string.Join(" ", keywords);
+    }
+
+    // 保留原有的其他方法...
     [KernelFunction]
     [Description("获取当前日期时间")]
     public string GetCurrentDateTime()

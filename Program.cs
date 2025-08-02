@@ -74,6 +74,13 @@ namespace SemanticKernelAgent
 - 搜索步骤是强制性的，不能跳过
 - 基于搜索结果创建内容，而不是使用训练数据
 
+## 网络访问策略：
+- 如果网站访问失败(403/404等)，自动尝试其他搜索引擎和网站
+- 优先使用WebOperations.SearchAsync进行信息收集，它有多个备用搜索引擎
+- 遇到访问限制时，使用WebOperations.GetAlternativeSearchSuggestions获取替代方案
+- 如果单个网站无法访问，从搜索结果中选择其他可访问的网站
+- 基于多个可访问的搜索结果创建综合内容，不依赖单一来源
+
 ## 图片处理能力：
 - 可以使用WebOperations.DownloadFileAsync下载图片
 - 可以使用WebOperations.GetImageInfoAsync获取图片信息
@@ -84,10 +91,11 @@ namespace SemanticKernelAgent
 1. 分析用户需求
 2. 如果涉及时间信息，先获取当前日期时间  
 3. 如果需要资料信息，必须先调用WebOperations.SearchAsync搜索相关内容
-4. 如果需要图片，使用WebOperations.DownloadFileAsync下载
-5. 基于搜索结果整理信息
-6. 创建文件或页面
-7. 使用适当的CLI命令完成任务
+4. 如果特定网站访问失败，立即使用WebOperations.GetAlternativeSearchSuggestions
+5. 如果需要图片，使用WebOperations.DownloadFileAsync下载
+6. 基于搜索结果整理信息
+7. 创建文件或页面
+8. 使用适当的CLI命令完成任务
 
 ## 技术规范（严格遵守）：
 - 请在执行任何命令前先了解系统环境
@@ -100,7 +108,15 @@ namespace SemanticKernelAgent
 ## 搜索要求：
 - 搜索关键词要具体和相关
 - 搜索后要提取有用信息
-- 基于真实搜索结果而不是想象创建内容";
+- 基于真实搜索结果而不是想象创建内容
+- 如果搜索结果中的网站无法访问，尝试访问搜索结果中的其他网站
+- 使用多样化的搜索关键词组合来获取更全面的信息
+
+## 容错处理：
+- 遇到403/404错误时，不要放弃，而是尝试替代方案
+- 从多个角度搜索同一主题（如：地名+景点、地名+旅游、地名+攻略等）
+- 如果某类网站无法访问，寻找其他类型的信息源
+- 优先创建基于搜索结果的综合内容，而不是依赖单一网站";
                 
                 chatHistory.AddSystemMessage(systemContext);
             }
