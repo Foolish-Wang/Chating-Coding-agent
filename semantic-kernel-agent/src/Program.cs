@@ -89,7 +89,7 @@ namespace SemanticKernelAgent
 6. 创建文件或页面
 7. 使用适当的CLI命令完成任务
 
-## 技术规范：
+## 技术规范（严格遵守）：
 - 请在执行任何命令前先了解系统环境
 - 根据操作系统选择合适的命令和工具
 - Windows使用PowerShell或CMD，Unix使用bash
