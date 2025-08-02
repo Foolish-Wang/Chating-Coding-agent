@@ -5,6 +5,7 @@ using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using DotNetEnv;
 using SemanticKernelAgent.Models;
+using System.Linq;
 
 namespace SemanticKernelAgent
 {
@@ -43,19 +44,25 @@ namespace SemanticKernelAgent
             kernel.Plugins.AddFromType<WebPlugin>("WebOperations");
             kernel.Plugins.AddFromType<CliPlugin>("CliOperations");
 
+            // 添加ReAct模式的函数调用监控
+            kernel.FunctionInvocationFilters.Add(new ReActLoggingFilter());
+
             Console.WriteLine("Agent is ready with file, web and CLI capabilities! Type 'exit' to quit.");
 
             // 聊天循环
             var chatService = kernel.GetRequiredService<IChatCompletionService>();
             var chatHistory = new ChatHistory();
 
-            // 创建执行设置，启用自动函数调用，添加超时设置
+            // 创建执行设置，启用自动函数调用
             var executionSettings = new OpenAIPromptExecutionSettings()
             {
                 ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions,
                 MaxTokens = 4000,
-                Temperature = 0.7
+                Temperature = 1
             };
+
+            // 移除过时的事件处理器，暂时不添加Filter
+            // 后续可以按照官方示例添加Filter来监控函数调用
 
             while (true)
             {
@@ -72,7 +79,6 @@ namespace SemanticKernelAgent
                     Console.WriteLine("Processing your request...");
                     chatHistory.AddUserMessage(input);
                     
-                    // 移除超时控制，让AI完成任务
                     var response = await chatService.GetChatMessageContentAsync(
                         chatHistory, 
                         executionSettings,
@@ -81,7 +87,6 @@ namespace SemanticKernelAgent
                     Console.WriteLine($"AI > {response.Content}");
                     chatHistory.AddAssistantMessage(response.Content!);
                     
-                    // 任务完成后，提示等待下一个命令
                     Console.WriteLine("\n--- Task completed. Ready for your next command ---\n");
                 }
                 catch (Exception ex)
@@ -97,6 +102,29 @@ namespace SemanticKernelAgent
             }
 
             Console.WriteLine("Agent has been stopped.");
+        }
+    }
+
+    // ReAct模式的函数调用监控Filter
+    public class ReActLoggingFilter : IFunctionInvocationFilter
+    {
+        private int _stepCounter = 0;
+
+        public async Task OnFunctionInvocationAsync(FunctionInvocationContext context, Func<FunctionInvocationContext, Task> next)
+        {
+            _stepCounter++;
+            
+            // Action: 显示即将执行的操作
+            Console.WriteLine($"\n🔧 Action {_stepCounter}: {context.Function.PluginName}.{context.Function.Name}");
+            Console.WriteLine($"   Parameters: {string.Join(", ", context.Arguments.Select(a => $"{a.Key}={a.Value?.ToString()?.Substring(0, Math.Min(50, a.Value?.ToString()?.Length ?? 0))}..."))}");
+            
+            // 执行函数
+            await next(context);
+            
+            // Observation: 显示执行结果
+            var result = context.Result?.ToString();
+            var truncatedResult = result?.Length > 200 ? result.Substring(0, 200) + "..." : result;
+            Console.WriteLine($"✅ Observation {_stepCounter}: {truncatedResult}");
         }
     }
 }
