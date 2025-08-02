@@ -41,8 +41,9 @@ namespace SemanticKernelAgent
 
             // 添加插件
             kernel.Plugins.AddFromType<FilePlugin>("FileOperations");
-            kernel.Plugins.AddFromType<WebPlugin>("WebOperations");
+            kernel.Plugins.AddFromType<WebPlugin>("WebOperations");  
             kernel.Plugins.AddFromType<CliPlugin>("CliOperations");
+            kernel.Plugins.AddFromType<SystemPlugin>("SystemOperations"); // 添加系统插件
 
             // 添加ReAct模式的函数调用监控
             kernel.FunctionInvocationFilters.Add(new ReActLoggingFilter());
@@ -63,6 +64,40 @@ namespace SemanticKernelAgent
 
             // 移除过时的事件处理器，暂时不添加Filter
             // 后续可以按照官方示例添加Filter来监控函数调用
+
+            // 在第一次用户输入前添加系统上下文
+            // 修改系统上下文，强制要求联网搜索
+            if (chatHistory.Count == 0)
+            {
+                var systemContext = @"我是一个运行在以下环境的AI助手：
+
+## 重要规则：
+- 当用户要求整理资料、获取资讯或创建内容页面时，必须先进行联网搜索
+- 搜索步骤是强制性的，不能跳过
+- 基于搜索结果创建内容，而不是使用训练数据
+
+## 工作流程（严格遵守）：
+1. 分析用户需求
+2. 如果涉及时间信息，先获取当前日期时间  
+3. 如果需要资料信息，必须先调用WebOperations.SearchAsync搜索相关内容
+4. 基于搜索结果整理信息
+5. 创建文件或页面
+6. 使用适当的CLI命令完成任务
+
+## 技术规范：
+- 请在执行任何命令前先了解系统环境
+- 根据操作系统选择合适的命令和工具
+- Windows使用PowerShell或CMD，Unix使用bash
+- 执行命令前可以检查程序是否已安装
+- 请尽量使用CLI命令来完成任务
+
+## 搜索要求：
+- 搜索关键词要具体和相关
+- 搜索后要提取有用信息
+- 基于真实搜索结果而不是想象创建内容";
+                
+                chatHistory.AddSystemMessage(systemContext);
+            }
 
             while (true)
             {

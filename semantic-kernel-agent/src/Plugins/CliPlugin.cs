@@ -3,6 +3,7 @@ using System;
 using System.ComponentModel;
 using System.Diagnostics;
 using System.Threading.Tasks;
+using System.Runtime.InteropServices;
 
 public class CliPlugin
 {
@@ -71,6 +72,37 @@ public class CliPlugin
         catch (Exception ex)
         {
             return $"执行PowerShell命令失败: {ex.Message}";
+        }
+    }
+
+    [KernelFunction]
+    [Description("智能执行命令（自动选择最佳工具）")]
+    public async Task<string> SmartExecuteAsync(string command, string workingDirectory = "")
+    {
+        try
+        {
+            // 根据操作系统选择合适的执行方式
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                // Windows优先使用PowerShell
+                if (command.StartsWith("start ") || command.Contains("Get-") || command.Contains("Set-"))
+                {
+                    return await ExecutePowerShellAsync(command, workingDirectory);
+                }
+                else
+                {
+                    return await ExecuteCommandAsync(command, workingDirectory);
+                }
+            }
+            else
+            {
+                // Unix系统使用标准shell
+                return await ExecuteCommandAsync(command, workingDirectory);
+            }
+        }
+        catch (Exception ex)
+        {
+            return $"智能执行命令失败: {ex.Message}";
         }
     }
 }
