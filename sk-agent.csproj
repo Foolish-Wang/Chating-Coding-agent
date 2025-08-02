@@ -4,7 +4,7 @@
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>SemanticKernelAgent</RootNamespace>
-    <AssemblyName>semantic-kernel-agent</AssemblyName>
+    <AssemblyName>sk-agent</AssemblyName>
   </PropertyGroup>
 
   <ItemGroup>
