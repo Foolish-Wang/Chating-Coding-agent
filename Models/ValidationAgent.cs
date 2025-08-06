@@ -1,6 +1,5 @@
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
-using Microsoft.SemanticKernel.Connectors.OpenAI;
 using Microsoft.SemanticKernel.Connectors.Google;
 using System.Threading.Tasks;
 using System.Collections.Generic;
@@ -16,54 +15,40 @@ namespace SemanticKernelAgent.Models
         private readonly Kernel _kernel;
         private readonly IChatCompletionService _chatService;
         private readonly ChatHistory _chatHistory;
-        private readonly bool _isGemini;
 
         public ValidationAgent(AgentConfig config, ValidationConfig validationConfig = null)
         {
             var kernelBuilder = Kernel.CreateBuilder();
-            _isGemini = false;
 
             if (validationConfig != null && validationConfig.UseGemini && !string.IsNullOrEmpty(validationConfig.ApiKey))
             {
+                Console.WriteLine("🔧 尝试连接Gemini API (官方连接器)...");
+                
                 try
                 {
-                    Console.WriteLine("🔧 尝试连接Gemini API (官方连接器)...");
-                    
                     // 使用官方的 Google AI Gemini 连接器
                     kernelBuilder.AddGoogleAIGeminiChatCompletion(
                         modelId: validationConfig.ModelId,
                         apiKey: validationConfig.ApiKey);
                     
-                    _isGemini = true;
                     Console.WriteLine("✅ Gemini API连接配置完成");
                 }
                 catch (Exception ex)
                 {
                     Console.WriteLine($"❌ Gemini API配置失败: {ex.Message}");
-                    Console.WriteLine("🔄 回退到DeepSeek API");
-                    
-                    // 回退到DeepSeek
-                    kernelBuilder.AddOpenAIChatCompletion(
-                        modelId: config.ModelId,
-                        apiKey: config.ApiKey,
-                        endpoint: new Uri(config.Endpoint));
+                    throw new InvalidOperationException($"无法连接到Gemini API: {ex.Message}", ex);
                 }
             }
             else
             {
-                Console.WriteLine("🔧 使用DeepSeek API作为验证Agent");
-                // 使用默认的DeepSeek API
-                kernelBuilder.AddOpenAIChatCompletion(
-                    modelId: config.ModelId,
-                    apiKey: config.ApiKey,
-                    endpoint: new Uri(config.Endpoint));
+                throw new InvalidOperationException("ValidationAgent 需要有效的 Gemini API 配置。请确保 GEMINI_API_KEY 已正确设置。");
             }
 
             _kernel = kernelBuilder.Build();
             _chatService = _kernel.GetRequiredService<IChatCompletionService>();
             _chatHistory = new ChatHistory();
 
-            // 设置验证Agent的系统提示（保持不变）
+            // 设置验证Agent的系统提示
             var validationSystemPrompt = @"你是一个专业的内容验证助手，负责检查主Agent完成的任务结果。
 
 ## 你的职责：
@@ -134,29 +119,10 @@ namespace SemanticKernelAgent.Models
 
                 _chatHistory.AddUserMessage(validationPrompt);
 
-                ChatMessageContent response;
-
-                if (_isGemini)
-                {
-                    // Gemini 使用简化调用，不传递执行设置
-                    response = await _chatService.GetChatMessageContentAsync(
-                        _chatHistory,
-                        kernel: _kernel);
-                }
-                else
-                {
-                    // OpenAI/DeepSeek 使用完整的执行设置
-                    var executionSettings = new OpenAIPromptExecutionSettings()
-                    {
-                        MaxTokens = 2000,
-                        Temperature = 0.3f
-                    };
-
-                    response = await _chatService.GetChatMessageContentAsync(
-                        _chatHistory,
-                        executionSettings,
-                        _kernel);
-                }
+                // Gemini 使用简化调用，不传递执行设置
+                var response = await _chatService.GetChatMessageContentAsync(
+                    _chatHistory,
+                    kernel: _kernel);
 
                 _chatHistory.AddAssistantMessage(response.Content);
 
@@ -171,16 +137,8 @@ namespace SemanticKernelAgent.Models
             catch (Exception ex)
             {
                 Console.WriteLine($"⚠️ 验证Agent调用失败: {ex.Message}");
-                Console.WriteLine($"详细错误: {ex}"); // 添加详细错误信息
-                
-                // 返回一个简化的验证结果，不阻止主流程
-                return new ValidationResult
-                {
-                    ValidationFeedback = "### 🔍 验证结果\n**总体评分**：8分\n\n### ✅ 完成良好的方面\n- 主Agent已完成任务\n- 基本功能实现\n\n### ❌ 发现的问题\n无法进行详细验证（验证服务暂时不可用）\n\n### 💡 建议\n请手动检查任务完成情况",
-                    HasIssues = false,
-                    OriginalTask = originalTask,
-                    TaskResult = taskResult
-                };
+                Console.WriteLine($"详细错误: {ex}");
+                throw; // 直接抛出异常，不提供回退
             }
         }
 
@@ -207,6 +165,5 @@ namespace SemanticKernelAgent.Models
         public string ApiKey { get; set; } = string.Empty;
         public string ModelId { get; set; } = string.Empty;
         public bool UseGemini { get; set; } = true;
-
     }
 }
