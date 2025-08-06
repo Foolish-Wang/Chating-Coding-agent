@@ -381,4 +381,84 @@ public class WebPlugin
 - curl: curl -o local_image.jpg https://example.com/image.jpg";
         }
     }
+
+    [KernelFunction]
+    [Description("测试网络连接和搜索引擎可访问性")]
+    public async Task<string> TestNetworkConnectionAsync()
+    {
+        var testUrls = new[]
+        {
+            "https://httpbin.org/get", // 测试基本HTTP连接
+            "https://www.google.com",
+            "https://www.bing.com", 
+            "https://html.duckduckgo.com",
+            "https://www.baidu.com"
+        };
+
+        var results = new List<string>();
+        results.Add("=== 网络连接测试 ===");
+
+        foreach (var url in testUrls)
+        {
+            try
+            {
+                using var response = await _httpClient.GetAsync(url);
+                results.Add($"✅ {url}: {response.StatusCode} ({response.ReasonPhrase})");
+            }
+            catch (Exception ex)
+            {
+                results.Add($"❌ {url}: {ex.Message}");
+            }
+        }
+
+        return string.Join("\n", results);
+    }
+
+    [KernelFunction]
+    [Description("诊断网络连接问题")]
+    public async Task<string> DiagnoseNetworkIssuesAsync()
+    {
+        var results = new List<string>();
+        results.Add("=== 网络诊断报告 ===\n");
+        
+        // 1. 测试基本HTTP连接
+        try
+        {
+            var response = await _httpClient.GetAsync("https://httpbin.org/get");
+            results.Add($"✅ 基本HTTP连接: {response.StatusCode}");
+        }
+        catch (Exception ex)
+        {
+            results.Add($"❌ 基本HTTP连接失败: {ex.Message}");
+            results.Add("可能原因：代理设置、防火墙或DNS问题\n");
+            return string.Join("\n", results);
+        }
+        
+        // 2. 测试DNS解析
+        var testDomains = new[] { "www.baidu.com", "www.bing.com", "duckduckgo.com" };
+        foreach (var domain in testDomains)
+        {
+            try
+            {
+                var addresses = await System.Net.Dns.GetHostAddressesAsync(domain);
+                results.Add($"✅ DNS解析 {domain}: {addresses.Length} 个地址");
+            }
+            catch (Exception ex)
+            {
+                results.Add($"❌ DNS解析 {domain} 失败: {ex.Message}");
+            }
+        }
+        
+        // 3. 检查User-Agent和请求头
+        results.Add($"\n当前User-Agent: {_userAgents[_currentUserAgentIndex]}");
+        
+        // 4. 建议使用本地搜索数据
+        results.Add("\n=== 建议解决方案 ===");
+        results.Add("1. 使用本地旅游数据库（推荐）");
+        results.Add("2. 配置HTTP代理");
+        results.Add("3. 使用API而非网页爬取");
+        results.Add("4. 手动提供数据源");
+        
+        return string.Join("\n", results);
+    }
 }

@@ -16,9 +16,9 @@ namespace SemanticKernelAgent
             // 加载环境变量
             Env.Load();
 
-            Console.WriteLine("正在初始化 Semantic Kernel Agent...");
+            Console.WriteLine("正在初始化多Agent系统...");
 
-            // 从环境变量创建配置
+            // 从环境变量创建主Agent配置
             var config = new AgentConfig
             {
                 ApiKey = Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY") ?? "",
@@ -31,8 +31,26 @@ namespace SemanticKernelAgent
                 throw new InvalidOperationException("DEEPSEEK_API_KEY not found in environment variables");
             }
 
-            // 创建内核并添加插件
-            var kernel = Kernel.CreateBuilder()
+            // 创建验证Agent配置（使用Gemini）
+            var validationConfig = new ValidationConfig
+            {
+                ApiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY") ?? "",
+                ModelId = "gemini-pro",
+                UseGemini = true
+            };
+
+            if (string.IsNullOrEmpty(validationConfig.ApiKey))
+            {
+                Console.WriteLine("⚠️ 警告：GEMINI_API_KEY未找到，验证Agent将使用DeepSeek API");
+                validationConfig = null;
+            }
+            else
+            {
+                Console.WriteLine("✅ 验证Agent将使用Gemini API");
+            }
+
+            // 创建主Agent内核并添加插件
+            var mainKernel = Kernel.CreateBuilder()
                 .AddOpenAIChatCompletion(
                     modelId: config.ModelId, 
                     apiKey: config.ApiKey, 
@@ -40,21 +58,24 @@ namespace SemanticKernelAgent
                 .Build();
 
             // 添加插件
-            kernel.Plugins.AddFromType<FilePlugin>("FileOperations");
-            kernel.Plugins.AddFromType<WebPlugin>("WebOperations");  
-            kernel.Plugins.AddFromType<CliPlugin>("CliOperations");
-            kernel.Plugins.AddFromType<SystemPlugin>("SystemOperations"); // 添加系统插件
+            mainKernel.Plugins.AddFromType<FilePlugin>("FileOperations");
+            mainKernel.Plugins.AddFromType<WebPlugin>("WebOperations");  
+            mainKernel.Plugins.AddFromType<CliPlugin>("CliOperations");
+            mainKernel.Plugins.AddFromType<SystemPlugin>("SystemOperations");
 
             // 添加ReAct模式的函数调用监控
-            kernel.FunctionInvocationFilters.Add(new ReActLoggingFilter());
+            mainKernel.FunctionInvocationFilters.Add(new ReActLoggingFilter());
 
-            Console.WriteLine("AI已经准备就绪，可以开始处理任务。输入 'exit' 退出程序。");
+            // 创建验证Agent
+            var validationAgent = new ValidationAgent(config, validationConfig);
 
-            // 聊天循环
-            var chatService = kernel.GetRequiredService<IChatCompletionService>();
+            // 创建主聊天历史
             var chatHistory = new ChatHistory();
 
-            // 创建执行设置，启用自动函数调用
+            // 创建多Agent协调器
+            var coordinator = new MultiAgentCoordinator(mainKernel, validationAgent, chatHistory);
+
+            // 创建执行设置
             var executionSettings = new OpenAIPromptExecutionSettings()
             {
                 ToolCallBehavior = ToolCallBehavior.AutoInvokeKernelFunctions,
@@ -62,9 +83,7 @@ namespace SemanticKernelAgent
                 Temperature = 1
             };
 
-
-            // 在第一次用户输入前添加系统上下文
-            // 修改系统上下文，强制要求联网搜索
+            // 添加系统上下文（与之前相同）
             if (chatHistory.Count == 0)
             {
                 var systemContext = @"我是一个运行在以下环境的AI助手：
@@ -121,6 +140,25 @@ namespace SemanticKernelAgent
                 chatHistory.AddSystemMessage(systemContext);
             }
 
+            Console.WriteLine("🤖 多Agent系统已准备就绪！");
+            Console.WriteLine("💡 系统包含：主Agent（DeepSeek）+ 副Agent（Gemini验证）");
+            Console.WriteLine("📝 输入任务，系统将自动进行验证和改进。输入 'exit' 退出程序。\n");
+
+            // 添加模式选择
+            Console.WriteLine("请选择运行模式：");
+            Console.WriteLine("1. 多Agent模式（主Agent + 验证Agent）");
+            Console.WriteLine("2. 单Agent模式（仅主Agent）");
+            Console.Write("选择模式 (1/2): ");
+            
+            var modeChoice = Console.ReadLine();
+            bool useMultiAgent = modeChoice == "1" || string.IsNullOrEmpty(modeChoice);
+            
+            Console.WriteLine(useMultiAgent ? "🔄 使用多Agent模式" : "🤖 使用单Agent模式");
+            Console.WriteLine();
+
+            // 聊天循环
+            var chatService = mainKernel.GetRequiredService<IChatCompletionService>();
+
             while (true)
             {
                 Console.Write("User > ");
@@ -134,16 +172,26 @@ namespace SemanticKernelAgent
                 try
                 {
                     Console.WriteLine("Processing your request...");
-                    chatHistory.AddUserMessage(input);
                     
-                    var response = await chatService.GetChatMessageContentAsync(
-                        chatHistory, 
-                        executionSettings,
-                        kernel);
+                    string response;
+                    if (useMultiAgent)
+                    {
+                        // 使用多Agent模式
+                        response = await coordinator.ProcessTaskWithValidationAsync(input, executionSettings);
+                    }
+                    else
+                    {
+                        // 使用单Agent模式（原有逻辑）
+                        chatHistory.AddUserMessage(input);
+                        var singleResponse = await chatService.GetChatMessageContentAsync(
+                            chatHistory, 
+                            executionSettings,
+                            mainKernel);
+                        chatHistory.AddAssistantMessage(singleResponse.Content!);
+                        response = singleResponse.Content!;
+                    }
 
-                    Console.WriteLine($"AI > {response.Content}");
-                    chatHistory.AddAssistantMessage(response.Content!);
-
+                    Console.WriteLine($"AI > {response}");
                     Console.WriteLine("\n--- 任务完成，准备好接受下一个命令 ---\n");
                 }
                 catch (Exception ex)
@@ -158,7 +206,7 @@ namespace SemanticKernelAgent
                 }
             }
 
-            Console.WriteLine("Agent has been stopped.");
+            Console.WriteLine("多Agent系统已停止。");
         }
     }
 
