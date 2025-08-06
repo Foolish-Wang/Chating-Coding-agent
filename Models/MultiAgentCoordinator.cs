@@ -72,13 +72,13 @@ namespace SemanticKernelAgent.Models
 
                 _mainChatHistory.AddAssistantMessage(improvedResponse.Content!);
 
-                // 返回改进后的结果和验证反馈
-                return $"{improvedResponse.Content}\n\n---\n**验证反馈**：\n{validationResult.ValidationFeedback}";
+                // 修改：先返回验证反馈，再返回改进后的结果
+                return $"**验证反馈**：\n{validationResult.ValidationFeedback}\n\n---\n**改进后的结果**：\n{improvedResponse.Content}";
             }
             else
             {
-                // 任务完成良好，返回原结果和正面反馈
-                return $"{mainResponse.Content}\n\n---\n**验证反馈**：\n{validationResult.ValidationFeedback}";
+                // 修改：先返回验证反馈，再返回原结果
+                return $"**验证反馈**：\n{validationResult.ValidationFeedback}\n\n---\n**最终结果**：\n{mainResponse.Content}";
             }
         }
     }
