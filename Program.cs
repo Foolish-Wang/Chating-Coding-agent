@@ -35,10 +35,11 @@ namespace SemanticKernelAgent
             var validationConfig = new ValidationConfig
             {
                 ApiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY") ?? "",
-                ModelId = "gemini-pro",
+                ModelId = Environment.GetEnvironmentVariable("GEMINI_MODEL_ID") ?? "gemini-pro",
                 UseGemini = true
             };
 
+            // 如果未找到GEMINI_API_KEY，则使用DeepSeek API
             if (string.IsNullOrEmpty(validationConfig.ApiKey))
             {
                 Console.WriteLine("⚠️ 警告：GEMINI_API_KEY未找到，验证Agent将使用DeepSeek API");
