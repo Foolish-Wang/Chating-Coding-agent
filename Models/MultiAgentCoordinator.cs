@@ -81,5 +81,13 @@ namespace SemanticKernelAgent.Models
                 return $"**验证反馈**：\n{validationResult.ValidationFeedback}\n\n---\n**最终结果**：\n{mainResponse.Content}";
             }
         }
+
+        /// <summary>
+        /// 重新加载验证Agent的系统提示
+        /// </summary>
+        public async Task ReloadValidationPromptAsync()
+        {
+            await _validationAgent.ReloadSystemPromptAsync();
+        }
     }
 }

@@ -113,16 +113,46 @@ namespace SemanticKernelAgent
             Console.WriteLine("💡 系统包含：主Agent（DeepSeek）+ 副Agent（Gemini验证）");
             Console.WriteLine("📝 输入任务，系统将自动进行验证和改进。输入 'exit' 退出程序。\n");
 
+            // 声明变量（移到这里，在使用之前）
+            bool useMultiAgent = false;
+
             // 添加模式选择
-            Console.WriteLine("请选择运行模式：");
-            Console.WriteLine("1. 多Agent模式（主Agent + 验证Agent）");
-            Console.WriteLine("2. 单Agent模式（仅主Agent）");
-            Console.Write("选择模式 (1/2): ");
-            
-            var modeChoice = Console.ReadLine();
-            bool useMultiAgent = modeChoice == "1" || string.IsNullOrEmpty(modeChoice);
-            
-            Console.WriteLine(useMultiAgent ? "🔄 使用多Agent模式" : "🤖 使用单Agent模式");
+            while (true)
+            {
+                Console.WriteLine("请选择运行模式：");
+                Console.WriteLine("1. 多Agent模式（主Agent + 验证Agent）");
+                Console.WriteLine("2. 单Agent模式（仅主Agent）");
+                Console.WriteLine("输入 'exit' 退出程序");
+                Console.Write("选择模式 (1/2): ");
+                
+                var modeChoice = Console.ReadLine();
+                
+                // 检查是否要退出
+                if (string.IsNullOrEmpty(modeChoice) || modeChoice.ToLower() == "exit")
+                {
+                    Console.WriteLine("程序已退出。");
+                    return; // 直接退出程序
+                }
+                
+                if (modeChoice == "1")
+                {
+                    Console.WriteLine("🔄 使用多Agent模式");
+                    useMultiAgent = true;
+                    break;
+                }
+                else if (modeChoice == "2")
+                {
+                    Console.WriteLine("🤖 使用单Agent模式");
+                    useMultiAgent = false;
+                    break;
+                }
+                else
+                {
+                    Console.WriteLine("❌ 无效选择，请输入 1 或 2");
+                    continue; // 重新提示用户选择
+                }
+            }
+
             Console.WriteLine("\n💡 提示：输入 'reload-prompt' 可重新加载系统提示");
             Console.WriteLine();
 
@@ -155,6 +185,12 @@ namespace SemanticKernelAgent
                         chatHistory.Insert(0, new ChatMessageContent(
                             AuthorRole.System, 
                             newSystemContext));
+                        
+                        // 同时重新加载验证Agent的提示
+                        if (useMultiAgent)
+                        {
+                            await coordinator.ReloadValidationPromptAsync();
+                        }
                         
                         Console.WriteLine("✅ 系统提示已重新加载");
                         continue;
