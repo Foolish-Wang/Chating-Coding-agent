@@ -1,6 +1,6 @@
 using System;
 
-namespace SemanticKernelAgent.Agent
+namespace SemanticKernelAgent.Agents
 {
     public class AgentService
     {
