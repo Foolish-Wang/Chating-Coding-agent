@@ -65,7 +65,7 @@ sk-agent/
 1. 克隆项目
 
 ```powershell
-git clone <repository-url>
+git clone https://github.com/Foolish-Wang/Chating-Coding-agent.git
 cd sk-agent
 ```
 
