@@ -2,14 +2,14 @@ using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.Google;
 using SemanticKernelAgent.Services;
+using SemanticKernelAgent.Models;
 using System.Threading.Tasks;
-using System.Collections.Generic;
 using System.Linq;
 using System;
 
 #pragma warning disable SKEXP0070
 
-namespace SemanticKernelAgent.Models
+namespace SemanticKernelAgent.Agents
 {
     public class ValidationAgent
     {
@@ -154,21 +154,5 @@ namespace SemanticKernelAgent.Models
             var issueIndicators = new[] { "❌", "问题", "错误", "缺少", "不足", "需要改进", "建议修改" };
             return issueIndicators.Any(indicator => feedback.Contains(indicator));
         }
-    }
-
-    public class ValidationResult
-    {
-        public string ValidationFeedback { get; set; } = "";
-        public bool HasIssues { get; set; }
-        public string OriginalTask { get; set; } = "";
-        public string TaskResult { get; set; } = "";
-        public List<string> SuggestedImprovements { get; set; } = new();
-    }
-
-    public class ValidationConfig
-    {
-        public string ApiKey { get; set; } = string.Empty;
-        public string ModelId { get; set; } = string.Empty;
-        public bool UseGemini { get; set; } = true;
     }
 }

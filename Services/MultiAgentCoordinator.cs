@@ -1,10 +1,12 @@
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
+using SemanticKernelAgent.Agents;
+using SemanticKernelAgent.Models;
 using System.Threading.Tasks;
 using System;
 
-namespace SemanticKernelAgent.Models
+namespace SemanticKernelAgent.Services
 {
     public class MultiAgentCoordinator
     {
