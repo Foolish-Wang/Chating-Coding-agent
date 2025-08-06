@@ -1,10 +1,13 @@
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
+using Microsoft.SemanticKernel.Connectors.Google;
 using System.Threading.Tasks;
 using System.Collections.Generic;
 using System.Linq;
 using System;
+
+#pragma warning disable SKEXP0070
 
 namespace SemanticKernelAgent.Models
 {
@@ -13,23 +16,25 @@ namespace SemanticKernelAgent.Models
         private readonly Kernel _kernel;
         private readonly IChatCompletionService _chatService;
         private readonly ChatHistory _chatHistory;
+        private readonly bool _isGemini;
 
         public ValidationAgent(AgentConfig config, ValidationConfig validationConfig = null)
         {
             var kernelBuilder = Kernel.CreateBuilder();
+            _isGemini = false;
 
-            if (validationConfig != null && validationConfig.UseGemini)
+            if (validationConfig != null && validationConfig.UseGemini && !string.IsNullOrEmpty(validationConfig.ApiKey))
             {
                 try
                 {
-                    Console.WriteLine("🔧 尝试连接Gemini API (OpenAI兼容模式)...");
+                    Console.WriteLine("🔧 尝试连接Gemini API (官方连接器)...");
                     
-                    // 修正：使用正确的OpenAI兼容端点
-                    kernelBuilder.AddOpenAIChatCompletion(
-                        modelId: validationConfig.ModelId, // 使用 .env 中的 "gemini-pro"
-                        apiKey: validationConfig.ApiKey,
-                        endpoint: new Uri(validationConfig.Endpoint)); // 使用 ValidationConfig 中定义的正确端点
+                    // 使用官方的 Google AI Gemini 连接器
+                    kernelBuilder.AddGoogleAIGeminiChatCompletion(
+                        modelId: validationConfig.ModelId,
+                        apiKey: validationConfig.ApiKey);
                     
+                    _isGemini = true;
                     Console.WriteLine("✅ Gemini API连接配置完成");
                 }
                 catch (Exception ex)
@@ -58,7 +63,7 @@ namespace SemanticKernelAgent.Models
             _chatService = _kernel.GetRequiredService<IChatCompletionService>();
             _chatHistory = new ChatHistory();
 
-            // 设置验证Agent的系统提示
+            // 设置验证Agent的系统提示（保持不变）
             var validationSystemPrompt = @"你是一个专业的内容验证助手，负责检查主Agent完成的任务结果。
 
 ## 你的职责：
@@ -129,16 +134,29 @@ namespace SemanticKernelAgent.Models
 
                 _chatHistory.AddUserMessage(validationPrompt);
 
-                var executionSettings = new OpenAIPromptExecutionSettings()
-                {
-                    MaxTokens = 2000,
-                    Temperature = 0.3f
-                };
+                ChatMessageContent response;
 
-                var response = await _chatService.GetChatMessageContentAsync(
-                    _chatHistory,
-                    executionSettings,
-                    _kernel);
+                if (_isGemini)
+                {
+                    // Gemini 使用简化调用，不传递执行设置
+                    response = await _chatService.GetChatMessageContentAsync(
+                        _chatHistory,
+                        kernel: _kernel);
+                }
+                else
+                {
+                    // OpenAI/DeepSeek 使用完整的执行设置
+                    var executionSettings = new OpenAIPromptExecutionSettings()
+                    {
+                        MaxTokens = 2000,
+                        Temperature = 0.3f
+                    };
+
+                    response = await _chatService.GetChatMessageContentAsync(
+                        _chatHistory,
+                        executionSettings,
+                        _kernel);
+                }
 
                 _chatHistory.AddAssistantMessage(response.Content);
 
@@ -153,6 +171,7 @@ namespace SemanticKernelAgent.Models
             catch (Exception ex)
             {
                 Console.WriteLine($"⚠️ 验证Agent调用失败: {ex.Message}");
+                Console.WriteLine($"详细错误: {ex}"); // 添加详细错误信息
                 
                 // 返回一个简化的验证结果，不阻止主流程
                 return new ValidationResult
@@ -185,10 +204,9 @@ namespace SemanticKernelAgent.Models
 
     public class ValidationConfig
     {
-        public string ApiKey { get; set; } = "";
-        public string ModelId { get; set; } = "gemini-pro";
+        public string ApiKey { get; set; } = string.Empty;
+        public string ModelId { get; set; } = string.Empty;
         public bool UseGemini { get; set; } = true;
-        // 修正：定义正确的OpenAI兼容端点
-        public string Endpoint { get; set; } = "https://generativelanguage.googleapis.com/v1beta/openai";
+
     }
 }

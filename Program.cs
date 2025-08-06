@@ -3,10 +3,13 @@ using System.Threading.Tasks;
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
+using Microsoft.SemanticKernel.Connectors.Google; 
 using DotNetEnv;
 using SemanticKernelAgent.Models;
 using SemanticKernelAgent.Services;
 using System.Linq;
+
+#pragma warning disable SKEXP0070
 
 namespace SemanticKernelAgent
 {
@@ -22,9 +25,9 @@ namespace SemanticKernelAgent
             // 从环境变量创建主Agent配置
             var config = new AgentConfig
             {
-                ApiKey = Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY") ?? "",
-                ModelId = Environment.GetEnvironmentVariable("DEEPSEEK_MODEL_ID") ?? "deepseek-chat",
-                Endpoint = Environment.GetEnvironmentVariable("DEEPSEEK_ENDPOINT") ?? "https://api.deepseek.com/"
+                ApiKey = Environment.GetEnvironmentVariable("DEEPSEEK_API_KEY"),
+                ModelId = Environment.GetEnvironmentVariable("DEEPSEEK_MODEL_ID"),
+                Endpoint = Environment.GetEnvironmentVariable("DEEPSEEK_ENDPOINT")
             };
 
             if (string.IsNullOrEmpty(config.ApiKey))
@@ -35,8 +38,8 @@ namespace SemanticKernelAgent
             // 创建验证Agent配置（使用Gemini）
             var validationConfig = new ValidationConfig
             {
-                ApiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY") ?? "",
-                ModelId = Environment.GetEnvironmentVariable("GEMINI_MODEL_ID") ?? "gemini-pro",
+                ApiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY"),
+                ModelId = Environment.GetEnvironmentVariable("GEMINI_MODEL_ID"), 
                 UseGemini = true
             };
 
