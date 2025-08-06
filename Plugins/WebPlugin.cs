@@ -6,459 +6,594 @@ using System.Threading.Tasks;
 using System.Net.Http;
 using System.Text.RegularExpressions;
 using System.Linq;
-using System.Net.Http.Headers;
-using System.Runtime.InteropServices;
 using System.Collections.Generic;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 
 public class WebPlugin
 {
     private readonly HttpClient _httpClient;
-    private readonly List<string> _userAgents;
-    private int _currentUserAgentIndex = 0;
+    private readonly string _tavilyApiKey;
+    private readonly string _tavilyBaseUrl = "https://api.tavily.com";
 
     public WebPlugin()
     {
         _httpClient = new HttpClient();
-        _httpClient.Timeout = TimeSpan.FromSeconds(30);
+        _httpClient.Timeout = TimeSpan.FromSeconds(60);
         
-        // 多个User-Agent轮换使用
-        _userAgents = new List<string>
+        // 从环境变量获取Tavily API Key
+        _tavilyApiKey = Environment.GetEnvironmentVariable("TAVILY_API_KEY") ?? "";
+        
+        if (string.IsNullOrEmpty(_tavilyApiKey))
         {
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:121.0) Gecko/20100101 Firefox/121.0",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        };
-        
-        SetUserAgent();
-    }
-
-    private void SetUserAgent()
-    {
-        _httpClient.DefaultRequestHeaders.Clear();
-        _httpClient.DefaultRequestHeaders.Add("User-Agent", _userAgents[_currentUserAgentIndex]);
-        _httpClient.DefaultRequestHeaders.Add("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8");
-        _httpClient.DefaultRequestHeaders.Add("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8");
-        _httpClient.DefaultRequestHeaders.Add("Accept-Encoding", "gzip, deflate, br");
-        _httpClient.DefaultRequestHeaders.Add("Connection", "keep-alive");
-        _httpClient.DefaultRequestHeaders.Add("Upgrade-Insecure-Requests", "1");
+            Console.WriteLine("⚠️ 警告: TAVILY_API_KEY 未设置，部分功能可能无法使用");
+        }
     }
 
     [KernelFunction]
-    [Description("智能搜索网络信息，自动尝试多个搜索引擎和备用方案")]
+    [Description("使用Tavily搜索引擎进行智能搜索，获取最新的网络信息")]
     public async Task<string> SearchAsync(string query)
     {
-        var searchEngines = new[]
+        if (string.IsNullOrEmpty(_tavilyApiKey))
         {
-            new { Name = "DuckDuckGo", Url = $"https://html.duckduckgo.com/html/?q={Uri.EscapeDataString(query)}" },
-            new { Name = "Bing", Url = $"https://www.bing.com/search?q={Uri.EscapeDataString(query)}" },
-            new { Name = "百度", Url = $"https://www.baidu.com/s?wd={Uri.EscapeDataString(query)}" }
-        };
-
-        var results = new List<string>();
-        
-        foreach (var engine in searchEngines)
-        {
-            try
-            {
-                Console.WriteLine($"🔍 尝试使用 {engine.Name} 搜索...");
-                
-                // 每次尝试都换一个User-Agent
-                _currentUserAgentIndex = (_currentUserAgentIndex + 1) % _userAgents.Count;
-                SetUserAgent();
-                
-                await Task.Delay(1000); // 延迟避免频率限制
-                
-                var html = await _httpClient.GetStringAsync(engine.Url);
-                
-                if (engine.Name == "DuckDuckGo")
-                {
-                    var links = ExtractDuckDuckGoResults(html);
-                    if (links.Any())
-                    {
-                        results.Add($"=== {engine.Name} 搜索结果 ===\n" + string.Join("\n\n", links));
-                        break; // 成功就不再尝试其他搜索引擎
-                    }
-                }
-                else if (engine.Name == "Bing")
-                {
-                    var links = ExtractBingResults(html);
-                    if (links.Any())
-                    {
-                        results.Add($"=== {engine.Name} 搜索结果 ===\n" + string.Join("\n\n", links));
-                        break;
-                    }
-                }
-                else if (engine.Name == "百度")
-                {
-                    var links = ExtractBaiduResults(html);
-                    if (links.Any())
-                    {
-                        results.Add($"=== {engine.Name} 搜索结果 ===\n" + string.Join("\n\n", links));
-                        break;
-                    }
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ {engine.Name} 搜索失败: {ex.Message}");
-                continue;
-            }
+            return "❌ Tavily API Key 未配置，请在 .env 文件中设置 TAVILY_API_KEY";
         }
 
-        if (results.Any())
+        try
         {
-            return string.Join("\n\n", results);
+            Console.WriteLine($"🔍 使用Tavily搜索: {query}");
+
+            var searchRequest = new TavilySearchRequest
+            {
+                ApiKey = _tavilyApiKey,
+                Query = query,
+                SearchDepth = "advanced",
+                IncludeAnswer = true,
+                IncludeImages = false,
+                IncludeRawContent = false,
+                MaxResults = 8,
+                IncludeDomains = null,
+                ExcludeDomains = null
+            };
+
+            var jsonContent = JsonSerializer.Serialize(searchRequest, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+                WriteIndented = false
+            });
+
+            var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+            
+            var response = await _httpClient.PostAsync($"{_tavilyBaseUrl}/search", content);
+            
+            if (response.IsSuccessStatusCode)
+            {
+                var responseContent = await response.Content.ReadAsStringAsync();
+                var searchResponse = JsonSerializer.Deserialize<TavilySearchResponse>(responseContent, 
+                    new JsonSerializerOptions 
+                    { 
+                        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+                        PropertyNameCaseInsensitive = true
+                    });
+
+                return FormatTavilyResults(searchResponse, query);
+            }
+            else
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                Console.WriteLine($"❌ Tavily搜索失败: {response.StatusCode} - {errorContent}");
+                return GetFallbackSearchResults(query);
+            }
         }
-        
-        // 如果所有搜索引擎都失败，返回建议
-        return $"所有搜索引擎都无法访问。建议：\n" +
-               $"1. 检查网络连接\n" +
-               $"2. 尝试具体的关键词：{query}\n" +
-               $"3. 可以直接提供相关网站URL";
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ Tavily搜索异常: {ex.Message}");
+            return GetFallbackSearchResults(query);
+        }
     }
 
     [KernelFunction]
-    [Description("智能获取网页内容，自动重试和备用方案")]
+    [Description("使用Tavily获取特定网页的详细内容")]
     public async Task<string> GetWebPageTextAsync(string url)
     {
-        var maxRetries = 3;
-        
-        for (int attempt = 0; attempt < maxRetries; attempt++)
+        if (string.IsNullOrEmpty(_tavilyApiKey))
         {
-            try
+            return "❌ Tavily API Key 未配置，请在 .env 文件中设置 TAVILY_API_KEY";
+        }
+
+        try
+        {
+            Console.WriteLine($"🌐 使用Tavily获取网页内容: {url}");
+
+            var extractRequest = new TavilyExtractRequest
             {
-                // 每次重试都更换User-Agent
-                _currentUserAgentIndex = (_currentUserAgentIndex + 1) % _userAgents.Count;
-                SetUserAgent();
-                
-                if (attempt > 0)
+                ApiKey = _tavilyApiKey,
+                Urls = new[] { url }
+            };
+
+            var jsonContent = JsonSerializer.Serialize(extractRequest, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+                WriteIndented = false
+            });
+
+            var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+            
+            var response = await _httpClient.PostAsync($"{_tavilyBaseUrl}/extract", content);
+            
+            if (response.IsSuccessStatusCode)
+            {
+                var responseContent = await response.Content.ReadAsStringAsync();
+                var extractResponse = JsonSerializer.Deserialize<TavilyExtractResponse>(responseContent,
+                    new JsonSerializerOptions 
+                    { 
+                        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+                        PropertyNameCaseInsensitive = true
+                    });
+
+                if (extractResponse?.Results?.Any() == true)
                 {
-                    Console.WriteLine($"🔄 第 {attempt + 1} 次尝试访问: {url}");
-                    await Task.Delay(2000 * attempt); // 递增延迟
+                    var result = extractResponse.Results.First();
+                    var cleanContent = CleanExtractedContent(result.RawContent ?? "");
+                    
+                    Console.WriteLine($"✅ 网页内容提取成功，长度: {cleanContent.Length} 字符");
+                    
+                    return $"🌐 网页标题: {result.Title}\n" +
+                           $"📍 URL: {result.Url}\n" +
+                           $"📄 内容:\n{cleanContent.Substring(0, Math.Min(cleanContent.Length, 8000))}";
                 }
-                
-                var html = await _httpClient.GetStringAsync(url);
-                
-                // 移除脚本和样式标签
-                html = Regex.Replace(html, @"<script[^>]*>.*?</script>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
-                html = Regex.Replace(html, @"<style[^>]*>.*?</style>", "", RegexOptions.IgnoreCase | RegexOptions.Singleline);
-                
-                // 移除所有HTML标签
-                var text = Regex.Replace(html, @"<[^>]+>", " ");
-                
-                // 清理多余空白
-                text = Regex.Replace(text, @"\s+", " ").Trim();
-                
-                var result = text.Length > 8000 ? text.Substring(0, 8000) + "..." : text;
-                
-                if (string.IsNullOrWhiteSpace(result) || result.Length < 100)
+                else
                 {
-                    throw new Exception("页面内容过少或为空");
+                    return $"⚠️ 无法提取网页内容: {url}";
                 }
-                
-                return result;
             }
-            catch (HttpRequestException ex) when (ex.Message.Contains("403"))
+            else
             {
-                Console.WriteLine($"❌ 访问被拒绝 (403): {url}");
-                if (attempt == maxRetries - 1)
-                {
-                    return await TryAlternativeAccess(url);
-                }
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ 第 {attempt + 1} 次尝试失败: {ex.Message}");
-                if (attempt == maxRetries - 1)
-                {
-                    return await TryAlternativeAccess(url);
-                }
+                var errorContent = await response.Content.ReadAsStringAsync();
+                Console.WriteLine($"❌ 网页提取失败: {response.StatusCode} - {errorContent}");
+                return HandleFailedWebAccess(url);
             }
         }
-        
-        return $"无法访问网页: {url}";
+        catch (Exception ex)
+        {
+            Console.WriteLine($"❌ 网页提取异常: {ex.Message}");
+            return HandleFailedWebAccess(url);
+        }
     }
 
     [KernelFunction]
-    [Description("当网页访问失败时，提供替代搜索建议")]
-    public async Task<string> GetAlternativeSearchSuggestions(string originalUrl, string searchQuery)
+    [Description("使用Tavily进行深度搜索，获取更详细的信息")]
+    public async Task<string> DeepSearchAsync(string query)
     {
-        var suggestions = new List<string>();
-        
-        // 分析URL，提取关键信息
-        var domain = ExtractDomain(originalUrl);
-        var keywords = ExtractKeywordsFromUrl(originalUrl);
-        
-        suggestions.Add($"原始网页 {originalUrl} 访问失败，建议替代方案：");
-        suggestions.Add("");
-        
-        // 基于域名的替代建议
-        if (domain.Contains("zhihu"))
+        if (string.IsNullOrEmpty(_tavilyApiKey))
         {
-            suggestions.Add("1. 尝试搜索知乎相关内容：");
-            await Task.Delay(500);
-            var zhihuSearch = await SearchAsync($"{searchQuery} site:zhihu.com");
-            suggestions.Add(zhihuSearch);
+            return "❌ Tavily API Key 未配置，请在 .env 文件中设置 TAVILY_API_KEY";
         }
-        else if (domain.Contains("baidu") || domain.Contains("google"))
+
+        try
         {
-            suggestions.Add("1. 搜索引擎结果页面访问失败，尝试直接搜索：");
-            var directSearch = await SearchAsync(searchQuery);
-            suggestions.Add(directSearch);
+            Console.WriteLine($"🔍 Tavily深度搜索: {query}");
+
+            var searchRequest = new TavilySearchRequest
+            {
+                ApiKey = _tavilyApiKey,
+                Query = query,
+                SearchDepth = "advanced",
+                IncludeAnswer = true,
+                IncludeImages = true,
+                IncludeRawContent = true,
+                MaxResults = 10,
+                IncludeDomains = null,
+                ExcludeDomains = null
+            };
+
+            var jsonContent = JsonSerializer.Serialize(searchRequest, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+                WriteIndented = false
+            });
+
+            var content = new StringContent(jsonContent, Encoding.UTF8, "application/json");
+            
+            var response = await _httpClient.PostAsync($"{_tavilyBaseUrl}/search", content);
+            
+            if (response.IsSuccessStatusCode)
+            {
+                var responseContent = await response.Content.ReadAsStringAsync();
+                var searchResponse = JsonSerializer.Deserialize<TavilySearchResponse>(responseContent,
+                    new JsonSerializerOptions 
+                    { 
+                        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+                        PropertyNameCaseInsensitive = true
+                    });
+
+                return FormatTavilyDeepResults(searchResponse, query);
+            }
+            else
+            {
+                var errorContent = await response.Content.ReadAsStringAsync();
+                Console.WriteLine($"❌ Tavily深度搜索失败: {response.StatusCode} - {errorContent}");
+                return GetFallbackSearchResults(query);
+            }
         }
-        else
+        catch (Exception ex)
         {
-            suggestions.Add($"1. 尝试搜索相关主题：{searchQuery}");
-            var relatedSearch = await SearchAsync($"{searchQuery} {keywords}");
-            suggestions.Add(relatedSearch);
+            Console.WriteLine($"❌ Tavily深度搜索异常: {ex.Message}");
+            return GetFallbackSearchResults(query);
+        }
+    }
+
+    [KernelFunction]
+    [Description("当主要搜索方法失败时，提供替代搜索策略")]
+    public async Task<string> GetAlternativeSearchSuggestions(string originalQuery)
+    {
+        var suggestions = new List<string>
+        {
+            $"原始搜索 '{originalQuery}' 遇到问题，尝试以下替代方案：\n"
+        };
+
+        // 生成不同的关键词组合
+        var alternativeQueries = GenerateAlternativeQueries(originalQuery);
+        
+        suggestions.Add("=== 建议的替代搜索词 ===");
+        for (int i = 0; i < alternativeQueries.Length && i < 5; i++)
+        {
+            suggestions.Add($"{i + 1}. {alternativeQueries[i]}");
         }
         
-        suggestions.Add("");
-        suggestions.Add("2. 建议手动搜索关键词:");
-        suggestions.Add($"   - {searchQuery}");
-        suggestions.Add($"   - {keywords}");
-        suggestions.Add($"   - {domain} {searchQuery}");
+        suggestions.Add("\n=== 手动搜索建议 ===");
+        suggestions.Add("1. 检查网络连接状态");
+        suggestions.Add("2. 验证Tavily API Key是否有效");
+        suggestions.Add("3. 尝试更简单的搜索关键词");
+        suggestions.Add("4. 等待一段时间后重试");
+        
+        // 尝试使用一个简化的搜索
+        try
+        {
+            Console.WriteLine("🔄 尝试简化搜索...");
+            var simpleQuery = ExtractKeyWords(originalQuery);
+            if (!string.IsNullOrEmpty(simpleQuery) && simpleQuery != originalQuery)
+            {
+                var fallbackResult = await SearchAsync(simpleQuery);
+                if (!string.IsNullOrEmpty(fallbackResult) && !fallbackResult.Contains("❌"))
+                {
+                    suggestions.Add("\n=== 简化搜索结果 ===");
+                    suggestions.Add(fallbackResult);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            suggestions.Add($"\n⚠️ 简化搜索也失败了: {ex.Message}");
+        }
         
         return string.Join("\n", suggestions);
     }
 
-    // 私有辅助方法
-    private async Task<string> TryAlternativeAccess(string url)
-    {
-        try
-        {
-            // 尝试使用Web Archive (Wayback Machine)
-            var archiveUrl = $"https://web.archive.org/web/{url}";
-            Console.WriteLine($"🔄 尝试访问存档版本: {archiveUrl}");
-            
-            var html = await _httpClient.GetStringAsync(archiveUrl);
-            var text = Regex.Replace(html, @"<[^>]+>", " ");
-            text = Regex.Replace(text, @"\s+", " ").Trim();
-            
-            if (text.Length > 100)
-            {
-                return $"[存档版本] {text.Substring(0, Math.Min(5000, text.Length))}...";
-            }
-        }
-        catch
-        {
-            // 存档也失败了
-        }
-        
-        return $"❌ 网页 {url} 访问失败 (403 Forbidden)。\n" +
-               $"可能原因：\n" +
-               $"1. 网站有反爬虫保护\n" +
-               $"2. 需要登录或特殊权限\n" +
-               $"3. 地区访问限制\n\n" +
-               $"建议：提供其他相关网站或具体搜索关键词";
-    }
-
-    private string[] ExtractDuckDuckGoResults(string html)
-    {
-        return Regex.Matches(html, @"<a[^>]+href=""([^""]+)""[^>]*class=""result__a""[^>]*>([^<]+)</a>")
-            .Cast<Match>()
-            .Take(5)
-            .Select(m => $"标题: {m.Groups[2].Value.Trim()}\nURL: {m.Groups[1].Value}")
-            .ToArray();
-    }
-
-    private string[] ExtractBingResults(string html)
-    {
-        return Regex.Matches(html, @"<h2><a[^>]+href=""([^""]+)""[^>]*>([^<]+)</a></h2>")
-            .Cast<Match>()
-            .Take(5)
-            .Select(m => $"标题: {m.Groups[2].Value.Trim()}\nURL: {m.Groups[1].Value}")
-            .ToArray();
-    }
-
-    private string[] ExtractBaiduResults(string html)
-    {
-        return Regex.Matches(html, @"<h3[^>]*><a[^>]+href=""([^""]+)""[^>]*>([^<]+)</a></h3>")
-            .Cast<Match>()
-            .Take(5)
-            .Select(m => $"标题: {m.Groups[2].Value.Trim()}\nURL: {m.Groups[1].Value}")
-            .ToArray();
-    }
-
-    private string ExtractDomain(string url)
-    {
-        try
-        {
-            var uri = new Uri(url);
-            return uri.Host;
-        }
-        catch
-        {
-            return "";
-        }
-    }
-
-    private string ExtractKeywordsFromUrl(string url)
-    {
-        // 简单提取URL中的关键词
-        var keywords = Regex.Matches(url, @"[a-zA-Z\u4e00-\u9fa5]{3,}")
-            .Cast<Match>()
-            .Select(m => m.Value)
-            .Take(3)
-            .ToArray();
-        
-        return string.Join(" ", keywords);
-    }
-
-    // 保留原有的其他方法...
     [KernelFunction]
     [Description("获取当前日期时间")]
     public string GetCurrentDateTime()
     {
-        return DateTime.Now.ToString("yyyy年MM月dd日 HH:mm:ss");
+        return DateTime.Now.ToString("yyyy年MM月dd日 HH:mm:ss dddd");
     }
 
     [KernelFunction]
-    [Description("下载图片或文件到本地")]
-    public async Task<string> DownloadFileAsync(string url, string localPath)
+    [Description("测试Tavily API连接状态")]
+    public async Task<string> TestTavilyConnectionAsync()
     {
+        if (string.IsNullOrEmpty(_tavilyApiKey))
+        {
+            return "❌ Tavily API Key 未配置，请在 .env 文件中设置 TAVILY_API_KEY";
+        }
+
         try
         {
-            var response = await _httpClient.GetAsync(url);
-            response.EnsureSuccessStatusCode();
+            Console.WriteLine("🔍 测试Tavily API连接...");
             
-            var directory = Path.GetDirectoryName(localPath);
-            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+            var testResult = await SearchAsync("hello world");
+            
+            if (testResult.Contains("❌"))
             {
-                Directory.CreateDirectory(directory);
+                return $"❌ Tavily API 连接失败:\n{testResult}";
             }
-            
-            await using var fileStream = File.Create(localPath);
-            await response.Content.CopyToAsync(fileStream);
-            
-            var fileInfo = new FileInfo(localPath);
-            return $"文件下载成功: {localPath}\n大小: {fileInfo.Length} 字节";
+            else
+            {
+                return "✅ Tavily API 连接正常，可以正常使用搜索功能";
+            }
         }
         catch (Exception ex)
         {
-            return $"下载文件失败: {ex.Message}";
+            return $"❌ Tavily API 测试异常: {ex.Message}";
         }
     }
 
-    [KernelFunction]
-    [Description("获取图片信息")]
-    public async Task<string> GetImageInfoAsync(string imageUrl)
+    // 私有辅助方法
+    private string FormatTavilyResults(TavilySearchResponse response, string query)
     {
-        try
+        if (response?.Results == null || !response.Results.Any())
         {
-            var response = await _httpClient.SendAsync(new HttpRequestMessage(HttpMethod.Head, imageUrl));
-            response.EnsureSuccessStatusCode();
-            
-            var contentType = response.Content.Headers.ContentType?.MediaType ?? "未知";
-            var contentLength = response.Content.Headers.ContentLength ?? 0;
-            
-            return $"图片URL: {imageUrl}\n" +
-                   $"内容类型: {contentType}\n" +
-                   $"文件大小: {contentLength} 字节\n" +
-                   $"状态: {response.StatusCode}";
+            return $"🔍 未找到关于 '{query}' 的搜索结果";
         }
-        catch (Exception ex)
-        {
-            return $"获取图片信息失败: {ex.Message}";
-        }
-    }
 
-    [KernelFunction]
-    [Description("获取图片下载的CLI命令参考（当WebPlugin方法失败时的备选方案）")]
-    public string GetImageDownloadCommands()
-    {
-        if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+        var formatted = new List<string>
         {
-            return @"Windows图片下载命令：
-- PowerShell: Invoke-WebRequest -Uri 'https://example.com/image.jpg' -OutFile 'local_image.jpg'
-- curl: curl -o local_image.jpg https://example.com/image.jpg";
-        }
-        else
-        {
-            return @"Unix/Linux图片下载命令：
-- wget: wget https://example.com/image.jpg -O local_image.jpg
-- curl: curl -o local_image.jpg https://example.com/image.jpg";
-        }
-    }
-
-    [KernelFunction]
-    [Description("测试网络连接和搜索引擎可访问性")]
-    public async Task<string> TestNetworkConnectionAsync()
-    {
-        var testUrls = new[]
-        {
-            "https://httpbin.org/get", // 测试基本HTTP连接
-            "https://www.google.com",
-            "https://www.bing.com", 
-            "https://html.duckduckgo.com",
-            "https://www.baidu.com"
+            $"🎯 Tavily搜索结果 ('{query}'):\n"
         };
 
-        var results = new List<string>();
-        results.Add("=== 网络连接测试 ===");
-
-        foreach (var url in testUrls)
+        // 添加AI生成的答案（如果有）
+        if (!string.IsNullOrEmpty(response.Answer))
         {
-            try
+            formatted.Add("🤖 AI 生成摘要:");
+            formatted.Add(response.Answer);
+            formatted.Add("");
+        }
+
+        // 添加搜索结果
+        formatted.Add("📄 搜索结果:");
+        for (int i = 0; i < Math.Min(response.Results.Length, 8); i++)
+        {
+            var result = response.Results[i];
+            formatted.Add($"\n{i + 1}. 📄 {result.Title}");
+            formatted.Add($"   🔗 {result.Url}");
+            if (!string.IsNullOrEmpty(result.Content))
             {
-                using var response = await _httpClient.GetAsync(url);
-                results.Add($"✅ {url}: {response.StatusCode} ({response.ReasonPhrase})");
+                var content = result.Content.Length > 200 ? result.Content.Substring(0, 200) + "..." : result.Content;
+                formatted.Add($"   📝 {content}");
             }
-            catch (Exception ex)
+            if (result.Score.HasValue)
             {
-                results.Add($"❌ {url}: {ex.Message}");
+                formatted.Add($"   ⭐ 相关度: {result.Score:F2}");
             }
         }
 
-        return string.Join("\n", results);
+        Console.WriteLine($"✅ Tavily搜索成功，返回 {response.Results.Length} 个结果");
+        
+        return string.Join("\n", formatted);
     }
 
-    [KernelFunction]
-    [Description("诊断网络连接问题")]
-    public async Task<string> DiagnoseNetworkIssuesAsync()
+    private string FormatTavilyDeepResults(TavilySearchResponse response, string query)
     {
-        var results = new List<string>();
-        results.Add("=== 网络诊断报告 ===\n");
-        
-        // 1. 测试基本HTTP连接
-        try
+        if (response?.Results == null || !response.Results.Any())
         {
-            var response = await _httpClient.GetAsync("https://httpbin.org/get");
-            results.Add($"✅ 基本HTTP连接: {response.StatusCode}");
+            return $"🔍 深度搜索未找到关于 '{query}' 的结果";
         }
-        catch (Exception ex)
+
+        var formatted = new List<string>
         {
-            results.Add($"❌ 基本HTTP连接失败: {ex.Message}");
-            results.Add("可能原因：代理设置、防火墙或DNS问题\n");
-            return string.Join("\n", results);
+            $"🎯 Tavily深度搜索结果 ('{query}'):\n"
+        };
+
+        // 添加AI生成的答案（如果有）
+        if (!string.IsNullOrEmpty(response.Answer))
+        {
+            formatted.Add("🤖 AI 详细分析:");
+            formatted.Add(response.Answer);
+            formatted.Add("");
         }
-        
-        // 2. 测试DNS解析
-        var testDomains = new[] { "www.baidu.com", "www.bing.com", "duckduckgo.com" };
-        foreach (var domain in testDomains)
+
+        // 添加图片（如果有）
+        if (response.Images?.Any() == true)
         {
-            try
+            formatted.Add("🖼️ 相关图片:");
+            foreach (var image in response.Images.Take(3))
             {
-                var addresses = await System.Net.Dns.GetHostAddressesAsync(domain);
-                results.Add($"✅ DNS解析 {domain}: {addresses.Length} 个地址");
+                formatted.Add($"   📸 {image}");
             }
-            catch (Exception ex)
+            formatted.Add("");
+        }
+
+        // 添加详细搜索结果
+        formatted.Add("📄 详细搜索结果:");
+        for (int i = 0; i < Math.Min(response.Results.Length, 10); i++)
+        {
+            var result = response.Results[i];
+            formatted.Add($"\n{i + 1}. 📄 {result.Title}");
+            formatted.Add($"   🔗 {result.Url}");
+            
+            if (!string.IsNullOrEmpty(result.Content))
             {
-                results.Add($"❌ DNS解析 {domain} 失败: {ex.Message}");
+                formatted.Add($"   📝 摘要: {result.Content}");
+            }
+            
+            if (!string.IsNullOrEmpty(result.RawContent))
+            {
+                var rawContent = CleanExtractedContent(result.RawContent);
+                var truncatedContent = rawContent.Length > 300 ? rawContent.Substring(0, 300) + "..." : rawContent;
+                formatted.Add($"   📋 详细内容: {truncatedContent}");
+            }
+            
+            if (result.Score.HasValue)
+            {
+                formatted.Add($"   ⭐ 相关度: {result.Score:F2}");
             }
         }
+
+        Console.WriteLine($"✅ Tavily深度搜索成功，返回 {response.Results.Length} 个详细结果");
         
-        // 3. 检查User-Agent和请求头
-        results.Add($"\n当前User-Agent: {_userAgents[_currentUserAgentIndex]}");
+        return string.Join("\n", formatted);
+    }
+
+    private string CleanExtractedContent(string content)
+    {
+        if (string.IsNullOrEmpty(content)) return string.Empty;
         
-        // 4. 建议使用本地搜索数据
-        results.Add("\n=== 建议解决方案 ===");
-        results.Add("1. 使用本地旅游数据库（推荐）");
-        results.Add("2. 配置HTTP代理");
-        results.Add("3. 使用API而非网页爬取");
-        results.Add("4. 手动提供数据源");
+        // 清理多余的空白字符
+        content = Regex.Replace(content, @"\s+", " ");
+        content = Regex.Replace(content, @"\n\s*\n", "\n");
         
-        return string.Join("\n", results);
+        return content.Trim();
+    }
+
+    private string GetFallbackSearchResults(string query)
+    {
+        var fallbackSuggestions = new List<string>
+        {
+            $"⚠️ Tavily搜索暂时不可用，建议：",
+            "",
+            $"1. 检查TAVILY_API_KEY是否正确配置",
+            $"2. 验证网络连接状态",
+            $"3. 检查Tavily API配额是否充足",
+            $"4. 尝试简化搜索关键词: {query}",
+            $"5. 稍后重试搜索",
+            "",
+            "=== 手动搜索建议 ===",
+            $"可以在浏览器中手动搜索: {query}",
+            $"- Google: https://www.google.com/search?q={Uri.EscapeDataString(query)}",
+            $"- Bing: https://www.bing.com/search?q={Uri.EscapeDataString(query)}",
+            $"- 百度: https://www.baidu.com/s?wd={Uri.EscapeDataString(query)}"
+        };
+        
+        return string.Join("\n", fallbackSuggestions);
+    }
+
+    private string HandleFailedWebAccess(string url)
+    {
+        return $"❌ 无法访问网页: {url}\n\n" +
+               $"可能原因:\n" +
+               $"• 网站有反爬虫保护\n" +
+               $"• 需要登录验证\n" +
+               $"• 地理位置限制\n" +
+               $"• Tavily API限制\n\n" +
+               $"建议:\n" +
+               $"• 在浏览器中手动访问\n" +
+               $"• 检查Tavily API配额\n" +
+               $"• 尝试其他相关搜索";
+    }
+
+    private string[] GenerateAlternativeQueries(string originalQuery)
+    {
+        var alternatives = new List<string> { originalQuery };
+        
+        // 添加一些变体
+        alternatives.Add($"{originalQuery} 2024");
+        alternatives.Add($"{originalQuery} 最新");
+        alternatives.Add($"{originalQuery} 详细信息");
+        alternatives.Add($"{originalQuery} 介绍");
+        alternatives.Add($"{originalQuery} 概述");
+        
+        // 如果包含中文，添加英文变体
+        if (Regex.IsMatch(originalQuery, @"[\u4e00-\u9fa5]"))
+        {
+            alternatives.Add($"{originalQuery} china");
+            alternatives.Add($"{originalQuery} chinese");
+        }
+        
+        return alternatives.ToArray();
+    }
+
+    private string ExtractKeyWords(string query)
+    {
+        // 提取关键词，去除停用词
+        var keywords = Regex.Matches(query, @"[\w\u4e00-\u9fa5]+")
+            .Cast<Match>()
+            .Select(m => m.Value)
+            .Where(w => w.Length > 1 && !IsStopWord(w))
+            .Take(3);
+            
+        return string.Join(" ", keywords);
+    }
+
+    private bool IsStopWord(string word)
+    {
+        var stopWords = new[] { 
+            "的", "了", "在", "是", "和", "与", "或", "但", "而", "因为", "所以", "如果", "那么", "这", "那", "什么", "怎么", "哪里", "怎样",
+            "the", "is", "are", "and", "or", "but", "if", "then", "what", "how", "where", "when", "why", "who", "which"
+        };
+        return stopWords.Contains(word.ToLower());
+    }
+
+    // Tavily API 数据模型
+    private class TavilySearchRequest
+    {
+        [JsonPropertyName("api_key")]
+        public string ApiKey { get; set; }
+
+        [JsonPropertyName("query")]
+        public string Query { get; set; }
+
+        [JsonPropertyName("search_depth")]
+        public string SearchDepth { get; set; } = "basic";
+
+        [JsonPropertyName("include_answer")]
+        public bool IncludeAnswer { get; set; } = true;
+
+        [JsonPropertyName("include_images")]
+        public bool IncludeImages { get; set; } = false;
+
+        [JsonPropertyName("include_raw_content")]
+        public bool IncludeRawContent { get; set; } = false;
+
+        [JsonPropertyName("max_results")]
+        public int MaxResults { get; set; } = 5;
+
+        [JsonPropertyName("include_domains")]
+        public string[] IncludeDomains { get; set; }
+
+        [JsonPropertyName("exclude_domains")]
+        public string[] ExcludeDomains { get; set; }
+    }
+
+    private class TavilySearchResponse
+    {
+        [JsonPropertyName("answer")]
+        public string Answer { get; set; }
+
+        [JsonPropertyName("query")]
+        public string Query { get; set; }
+
+        [JsonPropertyName("response_time")]
+        public double ResponseTime { get; set; }
+
+        [JsonPropertyName("images")]
+        public string[] Images { get; set; }
+
+        [JsonPropertyName("results")]
+        public TavilyResult[] Results { get; set; }
+    }
+
+    private class TavilyResult
+    {
+        [JsonPropertyName("title")]
+        public string Title { get; set; }
+
+        [JsonPropertyName("url")]
+        public string Url { get; set; }
+
+        [JsonPropertyName("content")]
+        public string Content { get; set; }
+
+        [JsonPropertyName("raw_content")]
+        public string RawContent { get; set; }
+
+        [JsonPropertyName("score")]
+        public double? Score { get; set; }
+    }
+
+    private class TavilyExtractRequest
+    {
+        [JsonPropertyName("api_key")]
+        public string ApiKey { get; set; }
+
+        [JsonPropertyName("urls")]
+        public string[] Urls { get; set; }
+    }
+
+    private class TavilyExtractResponse
+    {
+        [JsonPropertyName("results")]
+        public TavilyExtractResult[] Results { get; set; }
+    }
+
+    private class TavilyExtractResult
+    {
+        [JsonPropertyName("url")]
+        public string Url { get; set; }
+
+        [JsonPropertyName("title")]
+        public string Title { get; set; }
+
+        [JsonPropertyName("raw_content")]
+        public string RawContent { get; set; }
     }
 }
