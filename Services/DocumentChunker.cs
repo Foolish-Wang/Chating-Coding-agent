@@ -3,7 +3,6 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Linq;
-using System.Threading.Tasks;
 
 namespace SemanticKernelAgent.Services
 {
@@ -37,11 +36,6 @@ namespace SemanticKernelAgent.Services
                 switch (_config.SplitStrategy.ToLower())
                 {
                     case "fixed":
-                        chunks = CreateFixedSizeChunks(document, warnings);
-                        break;
-                    case "sentence":
-                        chunks = CreateSentenceBasedChunks(document, warnings);
-                        break;
                     default:
                         chunks = CreateFixedSizeChunks(document, warnings);
                         break;
@@ -150,53 +144,14 @@ namespace SemanticKernelAgent.Services
                 chunkIndex++;
 
                 // 计算下一个位置（考虑重叠）
-                position = Math.Max(position + 1, endPos - _config.ChunkOverlap);
-            }
-
-            return chunks;
-        }
-
-        /// <summary>
-        /// 基于句子的分块策略
-        /// </summary>
-        private List<DocumentChunk> CreateSentenceBasedChunks(DocumentInfo document, List<string> warnings)
-        {
-            var chunks = new List<DocumentChunk>();
-            var sentences = SplitIntoSentences(document.Content);
-            
-            var currentChunk = new List<string>();
-            var currentLength = 0;
-            var chunkIndex = 0;
-            var startPos = 0;
-
-            foreach (var sentence in sentences)
-            {
-                if (currentLength + sentence.Length > _config.ChunkSize && currentChunk.Count > 0)
+                // 如果是最后一块，结束循环
+                if (endPos >= content.Length)
                 {
-                    // 创建当前块
-                    var chunkContent = string.Join(" ", currentChunk);
-                    var chunk = CreateChunkFromContent(chunkContent, document, chunkIndex, startPos);
-                    chunks.Add(chunk);
-                    
-                    chunkIndex++;
-                    startPos += chunkContent.Length;
-
-                    // 重叠处理：保留最后几个句子
-                    var overlapSentences = GetOverlapSentences(currentChunk, _config.ChunkOverlap);
-                    currentChunk = overlapSentences;
-                    currentLength = overlapSentences.Sum(s => s.Length);
+                    break;
                 }
-
-                currentChunk.Add(sentence);
-                currentLength += sentence.Length;
-            }
-
-            // 处理最后一块
-            if (currentChunk.Count > 0)
-            {
-                var chunkContent = string.Join(" ", currentChunk);
-                var chunk = CreateChunkFromContent(chunkContent, document, chunkIndex, startPos);
-                chunks.Add(chunk);
+                
+                // 正确计算下一个位置：当前块结束位置减去重叠大小
+                position = Math.Max(endPos - _config.ChunkOverlap, position + 1);
             }
 
             return chunks;
@@ -219,74 +174,6 @@ namespace SemanticKernelAgent.Services
             }
             
             return preferredEnd;
-        }
-
-        /// <summary>
-        /// 将文本分割为句子
-        /// </summary>
-        private List<string> SplitIntoSentences(string content)
-        {
-            var sentences = new List<string>();
-            var sentenceEnders = new[] { '.', '!', '?', '。', '！', '？' };
-            
-            var currentSentence = "";
-            for (int i = 0; i < content.Length; i++)
-            {
-                currentSentence += content[i];
-                
-                if (sentenceEnders.Contains(content[i]))
-                {
-                    sentences.Add(currentSentence.Trim());
-                    currentSentence = "";
-                }
-            }
-            
-            if (!string.IsNullOrWhiteSpace(currentSentence))
-            {
-                sentences.Add(currentSentence.Trim());
-            }
-            
-            return sentences.Where(s => !string.IsNullOrWhiteSpace(s)).ToList();
-        }
-
-        /// <summary>
-        /// 获取重叠句子
-        /// </summary>
-        private List<string> GetOverlapSentences(List<string> sentences, int overlapSize)
-        {
-            var overlap = new List<string>();
-            var currentLength = 0;
-            
-            for (int i = sentences.Count - 1; i >= 0 && currentLength < overlapSize; i--)
-            {
-                overlap.Insert(0, sentences[i]);
-                currentLength += sentences[i].Length;
-            }
-            
-            return overlap;
-        }
-
-        /// <summary>
-        /// 从内容创建文档块
-        /// </summary>
-        private DocumentChunk CreateChunkFromContent(string content, DocumentInfo document, int chunkIndex, int startPos)
-        {
-            return new DocumentChunk
-            {
-                Content = content,
-                SourceFile = document.FileName,
-                ChunkIndex = chunkIndex,
-                StartPosition = startPos,
-                EndPosition = startPos + content.Length,
-                CharacterCount = content.Length,
-                Metadata = new Dictionary<string, object>
-                {
-                    ["source_document_id"] = document.Id,
-                    ["chunk_strategy"] = _config.SplitStrategy,
-                    ["chunk_size_config"] = _config.ChunkSize,
-                    ["overlap_size"] = _config.ChunkOverlap
-                }
-            };
         }
     }
 }

@@ -39,12 +39,12 @@ namespace SemanticKernelAgent.Models
     /// </summary>
     public class ChunkingConfig
     {
-        public int ChunkSize { get; set; } = 800;           // 每块字符数
-        public int ChunkOverlap { get; set; } = 200;        // 重叠字符数
-        public string SplitStrategy { get; set; } = "fixed"; // 分割策略：fixed, sentence, paragraph
-        public List<string> SeparatorChars { get; set; } = new() { "\n\n", "\n", ".", "!", "?" };
+        public int ChunkSize { get; set; } = 300;           // 每块字符数
+        public int ChunkOverlap { get; set; } = 50;         // 重叠字符数
+        public string SplitStrategy { get; set; } = "fixed"; // 只支持固定大小分割
+        public List<string> SeparatorChars { get; set; } = new() { "\n\n", "\n", "。", "！", "？", ".", "!", "?" };
         public bool PreserveWhitespace { get; set; } = false;
-        public int MinChunkSize { get; set; } = 100;        // 最小块大小
+        public int MinChunkSize { get; set; } = 50;         // 最小块大小
     }
 
     /// <summary>
