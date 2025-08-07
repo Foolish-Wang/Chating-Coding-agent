@@ -14,6 +14,7 @@ namespace SemanticKernelAgent.Services
     public class DocumentProcessor
     {
         private readonly List<string> _supportedExtensions = new() { ".txt", ".md" };
+        private readonly string _knowledgeBasePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Data");
 
         /// <summary>
         /// 从文件路径加载文档
@@ -61,23 +62,33 @@ namespace SemanticKernelAgent.Services
         }
 
         /// <summary>
+        /// 加载知识库中的所有文档
+        /// </summary>
+        public async Task<List<DocumentInfo>> LoadKnowledgeBaseDocumentsAsync()
+        {
+            return await LoadDocumentsFromDirectoryAsync(_knowledgeBasePath);
+        }
+
+        /// <summary>
         /// 批量加载目录中的文档
         /// </summary>
-        public async Task<List<DocumentInfo>> LoadDocumentsFromDirectoryAsync(string directoryPath)
+        public async Task<List<DocumentInfo>> LoadDocumentsFromDirectoryAsync(string directoryPath = null)
         {
+            // 如果没有指定目录，使用默认的知识库目录
+            var targetPath = directoryPath ?? _knowledgeBasePath;
             var documents = new List<DocumentInfo>();
 
-            if (!Directory.Exists(directoryPath))
+            if (!Directory.Exists(targetPath))
             {
-                Console.WriteLine($"❌ 目录不存在: {directoryPath}");
+                Console.WriteLine($"❌ 目录不存在: {targetPath}");
                 return documents;
             }
 
-            var files = Directory.GetFiles(directoryPath, "*.*", SearchOption.AllDirectories)
+            var files = Directory.GetFiles(targetPath, "*.*", SearchOption.AllDirectories)
                 .Where(f => _supportedExtensions.Contains(Path.GetExtension(f).ToLower()))
                 .ToList();
 
-            Console.WriteLine($"📁 在目录 {directoryPath} 中找到 {files.Count} 个支持的文档");
+            Console.WriteLine($"📁 在目录 {targetPath} 中找到 {files.Count} 个支持的文档");
 
             foreach (var file in files)
             {
