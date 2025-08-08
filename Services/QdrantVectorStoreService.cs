@@ -1,316 +1,218 @@
+#nullable enable
 using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.IO;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
-using Qdrant.Client;
+using Qdrant.Client;          // 仍保留（未来可恢复 gRPC）
 using Qdrant.Client.Grpc;
 using DotNetEnv;
-using System.Reflection;
 
 namespace SemanticKernelAgent.Services
 {
     /// <summary>
-    /// Qdrant 向量存储服务
+    /// Qdrant 向量存储服务（当前：仅 REST；gRPC 失败可后续再启用）
     /// </summary>
-    public class QdrantVectorStoreService
+    public class QdrantVectorStoreService : IDisposable
     {
-        private readonly QdrantClient _client;
-        private readonly string _collectionName;
+        private readonly QdrantClient? _client = null;   // 暂不使用（保留占位）
+        private readonly HttpClient _http;
+        private readonly string _host;
+        private readonly string _apiKey;
+        private readonly string _baseUrl;
+        private readonly JsonSerializerOptions _jsonOpt = new() { PropertyNameCaseInsensitive = true };
+        private readonly string _collectionName = "sk_agent_knowledge_base";
 
         public QdrantVectorStoreService()
         {
-            // 从环境变量加载配置
-            Env.Load();
-            
-            var endpoint = Environment.GetEnvironmentVariable("QDRANT_CLOUD_ENDPOINT");
-            var apiKey = Environment.GetEnvironmentVariable("QDRANT_CLOUD_API_KEY");
-            
-            // 解析主机名（去掉 https:// 前缀）
-            var host = endpoint?.Replace("https://", "").Replace("http://", "");
-            
-            Console.WriteLine($"🔗 连接 Qdrant: {host}");
-            
-            _client = new QdrantClient(
-                host: host,
-                https: true,
-                apiKey: apiKey
-            );
-            
-            _collectionName = "sk_agent_knowledge_base";
+            LoadEnvIfNeeded();
+            _host    = GetRequiredEnv("QDRANT_CLOUD_HOST");
+            _apiKey  = GetRequiredEnv("QDRANT_CLOUD_API_KEY");
+            _baseUrl = $"https://{_host}";
+            Console.WriteLine($"🔗 使用 REST 方式连接 Qdrant: {_host}");
+
+            _http = new HttpClient();
+            _http.DefaultRequestHeaders.Add("api-key", _apiKey);
+            _http.DefaultRequestHeaders.Add("User-Agent", "sk-agent/1.0");
+        }
+
+        private static void LoadEnvIfNeeded()
+        {
+            if (!string.IsNullOrEmpty(Environment.GetEnvironmentVariable("QDRANT_CLOUD_HOST"))) return;
+            var local = Path.Combine(AppContext.BaseDirectory, ".env");
+            var back  = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", ".env"));
+            if (File.Exists(local)) Env.Load(local);
+            else if (File.Exists(back)) Env.Load(back);
+        }
+
+        private static string GetRequiredEnv(string key)
+        {
+            var v = Environment.GetEnvironmentVariable(key);
+            if (string.IsNullOrWhiteSpace(v))
+                throw new InvalidOperationException($"缺少环境变量: {key}");
+            return v;
         }
 
         /// <summary>
-        /// 列出所有集合
+        /// 简单连通性测试：GET /collections
         /// </summary>
-        public async Task<IEnumerable<string>> ListCollectionsAsync()
+        public async Task<bool> PingAsync()
         {
             try
             {
-                Console.WriteLine("📋 获取 Qdrant 集合列表...");
-                var collections = await _client.ListCollectionsAsync();
-                
-                // 根据官方文档，ListCollectionsAsync 返回 string 列表
-                var collectionNames = collections.ToList();
-                Console.WriteLine($"✅ 找到 {collectionNames.Count} 个集合: {string.Join(", ", collectionNames)}");
-                
-                return collectionNames;
+                var resp = await _http.GetAsync($"{_baseUrl}/collections");
+                return resp.IsSuccessStatusCode;
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"❌ 获取集合列表失败: {ex.Message}");
-                throw;
+                Console.WriteLine($"❌ Ping 失败: {ex.Message}");
+                return false;
             }
         }
 
         /// <summary>
-        /// 创建集合
+        /// 获取集合名称列表（REST）
         /// </summary>
-        public async Task CreateCollectionAsync(string collectionName = null, int vectorSize = 1024)
+        public async Task<IReadOnlyList<string>> ListCollectionsAsync()
         {
-            var targetCollection = collectionName ?? _collectionName;
-            
-            try
+            var url = $"{_baseUrl}/collections";
+            var httpResp = await _http.GetAsync(url);
+            httpResp.EnsureSuccessStatusCode();
+            using var stream = await httpResp.Content.ReadAsStreamAsync();
+            using var doc = await JsonDocument.ParseAsync(stream);
+
+            var result = new List<string>();
+            if (doc.RootElement.TryGetProperty("result", out var r) &&
+                r.TryGetProperty("collections", out var cols))
             {
-                Console.WriteLine($"🏗️ 创建集合: {targetCollection} (向量维度: {vectorSize})");
-                
-                // 检查集合是否已存在
-                var collections = await ListCollectionsAsync();
-                if (collections.Contains(targetCollection))
+                foreach (var item in cols.EnumerateArray())
                 {
-                    Console.WriteLine($"ℹ️ 集合 {targetCollection} 已存在，跳过创建");
-                    return;
+                    if (item.TryGetProperty("name", out var nameProp))
+                        result.Add(nameProp.GetString()!);
                 }
-                
-                // 修复：直接使用 VectorParams 而不是 VectorsConfig
-                await _client.CreateCollectionAsync(
-                    collectionName: targetCollection,
-                    vectorsConfig: new VectorParams
+            }
+            Console.WriteLine($"✅ REST 列表成功（{result.Count}）");
+            return result;
+        }
+
+        /// <summary>
+        /// 判断集合是否存在（REST）
+        /// </summary>
+        public async Task<bool> CollectionExistsAsync(string name)
+        {
+            var resp = await _http.GetAsync($"{_baseUrl}/collections/{name}");
+            if (resp.IsSuccessStatusCode) return true;
+            if ((int)resp.StatusCode == 404) return false;
+            return false;
+        }
+
+        /// <summary>
+        /// 创建默认集合（若不存在）
+        /// </summary>
+        public async Task EnsureDefaultCollectionAsync(int vectorSize = 1536, Distance distance = Distance.Cosine)
+        {
+            if (await CollectionExistsAsync(_collectionName))
+            {
+                Console.WriteLine($"ℹ️ 集合已存在：{_collectionName}");
+                return;
+            }
+
+            var url = $"{_baseUrl}/collections/{_collectionName}";
+            var payload = new
+            {
+                vectors = new
+                {
+                    size = vectorSize,
+                    distance = distance.ToString().ToLower()
+                }
+            };
+            var json = JsonSerializer.Serialize(payload);
+            var resp = await _http.PutAsync(url, new StringContent(json, System.Text.Encoding.UTF8, "application/json"));
+            resp.EnsureSuccessStatusCode();
+            Console.WriteLine($"✅ REST 创建集合成功：{_collectionName}");
+        }
+
+        /// <summary>
+        /// 删除集合（REST）
+        /// </summary>
+        public async Task DeleteCollectionAsync(string name)
+        {
+            var resp = await _http.DeleteAsync($"{_baseUrl}/collections/{name}");
+            resp.EnsureSuccessStatusCode();
+            Console.WriteLine($"✅ REST 删除集合：{name}");
+        }
+
+        /// <summary>
+        /// 向集合中批量写入点（向量 + 载荷），若集合不存在可先调用 EnsureDefaultCollectionAsync
+        /// REST: POST /collections/{collection}/points
+        /// </summary>
+        public async Task UpsertPointsAsync(
+            string collectionName,
+            IEnumerable<(string Id, float[] Vector, Dictionary<string, object> Payload)> points)
+        {
+            var pointsArray = new List<object>();
+            foreach (var p in points)
+            {
+                pointsArray.Add(new
+                {
+                    id = p.Id,
+                    vector = p.Vector,
+                    payload = p.Payload
+                });
+            }
+
+            var body = new
+            {
+                points = pointsArray
+            };
+
+            var json = JsonSerializer.Serialize(body);
+            var resp = await _http.PostAsync(
+                $"{_baseUrl}/collections/{collectionName}/points",
+                new StringContent(json, Encoding.UTF8, "application/json"));
+
+            resp.EnsureSuccessStatusCode();
+            Console.WriteLine($"✅ 写入 {pointsArray.Count} 个向量到集合 {collectionName}");
+        }
+
+        /// <summary>
+        /// 直接对文档分块及对应向量批量写入（对齐顺序）
+        /// </summary>
+        public async Task IngestDocumentChunksAsync(
+            string collectionName,
+            string sourceFile,
+            IList<SemanticKernelAgent.Models.DocumentChunk> chunks,
+            IList<float[]> vectors)
+        {
+            if (chunks.Count != vectors.Count)
+                throw new InvalidOperationException("chunks 数量与 vectors 数量不匹配");
+
+            var batch = new List<(string Id, float[] Vector, Dictionary<string, object> Payload)>();
+            for (int i = 0; i < chunks.Count; i++)
+            {
+                var c = chunks[i];
+                batch.Add((
+                    Id: c.Id ?? SemanticKernelAgent.Services.RagUtils.GenerateChunkId(sourceFile, c.ChunkIndex),
+                    Vector: vectors[i],
+                    Payload: new Dictionary<string, object>
                     {
-                        Size = (ulong)vectorSize,
-                        Distance = Distance.Cosine
+                        ["text"] = c.Content,
+                        ["chunk_index"] = c.ChunkIndex,
+                        ["source"] = sourceFile,
+                        ["start"] = c.StartPosition,
+                        ["end"] = c.EndPosition
                     }
-                );
-                
-                Console.WriteLine($"✅ 集合 {targetCollection} 创建成功");
+                ));
             }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ 创建集合失败: {ex.Message}");
-                throw;
-            }
-        }
 
-        /// <summary>
-        /// 插入向量
-        /// </summary>
-        public async Task InsertVectorAsync(string id, float[] vector, Dictionary<string, object> metadata, string collectionName = null)
-        {
-            var targetCollection = collectionName ?? _collectionName;
-            
-            try
-            {
-                Console.WriteLine($"💾 插入向量到集合 {targetCollection}: ID={id}, 维度={vector.Length}");
-                
-                // 确保集合存在
-                await CreateCollectionAsync(targetCollection, vector.Length);
-                
-                // 构建元数据
-                var payload = new Dictionary<string, Value>();
-                foreach (var (key, value) in metadata)
-                {
-                    payload[key] = value switch
-                    {
-                        string s => new Value { StringValue = s },
-                        int i => new Value { IntegerValue = i },
-                        long l => new Value { IntegerValue = l },
-                        double d => new Value { DoubleValue = d },
-                        float f => new Value { DoubleValue = f },
-                        bool b => new Value { BoolValue = b },
-                        _ => new Value { StringValue = value?.ToString() ?? "" }
-                    };
-                }
-                
-                // 构建点数据
-                var point = new PointStruct
-                {
-                    Id = new PointId { Uuid = id },
-                    Vectors = vector,
-                    Payload = { payload }
-                };
-                
-                // 插入向量 - 根据官方文档的 UpsertAsync API
-                await _client.UpsertAsync(
-                    collectionName: targetCollection,
-                    points: new[] { point }
-                );
-                
-                Console.WriteLine($"✅ 向量插入成功: {id}");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ 插入向量失败: {ex.Message}");
-                throw;
-            }
-        }
-
-        /// <summary>
-        /// 批量插入向量
-        /// </summary>
-        public async Task BatchInsertVectorsAsync(List<(string Id, float[] Vector, Dictionary<string, object> Metadata)> vectorData, string collectionName = null)
-        {
-            var targetCollection = collectionName ?? _collectionName;
-            
-            try
-            {
-                Console.WriteLine($"📦 批量插入 {vectorData.Count} 个向量到集合 {targetCollection}");
-                
-                if (vectorData.Count == 0) return;
-                
-                // 确保集合存在
-                await CreateCollectionAsync(targetCollection, vectorData[0].Vector.Length);
-                
-                // 构建点数据
-                var points = new List<PointStruct>();
-                
-                foreach (var (id, vector, metadata) in vectorData)
-                {
-                    var payload = new Dictionary<string, Value>();
-                    foreach (var (key, value) in metadata)
-                    {
-                        payload[key] = value switch
-                        {
-                            string s => new Value { StringValue = s },
-                            int i => new Value { IntegerValue = i },
-                            long l => new Value { IntegerValue = l },
-                            double d => new Value { DoubleValue = d },
-                            float f => new Value { DoubleValue = f },
-                            bool b => new Value { BoolValue = b },
-                            _ => new Value { StringValue = value?.ToString() ?? "" }
-                        };
-                    }
-                    
-                    points.Add(new PointStruct
-                    {
-                        Id = new PointId { Uuid = id },
-                        Vectors = vector,
-                        Payload = { payload }
-                    });
-                }
-                
-                // 批量插入
-                await _client.UpsertAsync(
-                    collectionName: targetCollection,
-                    points: points
-                );
-                
-                Console.WriteLine($"✅ 批量插入完成: {vectorData.Count} 个向量");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ 批量插入失败: {ex.Message}");
-                throw;
-            }
-        }
-
-        /// <summary>
-        /// 搜索相似向量
-        /// </summary>
-        public async Task<List<(string Id, float Score, Dictionary<string, object> Metadata)>> SearchAsync(
-            float[] queryVector, int limit = 10, string collectionName = null)
-        {
-            var targetCollection = collectionName ?? _collectionName;
-            
-            try
-            {
-                Console.WriteLine($"🔍 搜索相似向量: 集合={targetCollection}, 限制={limit}, 查询向量维度={queryVector.Length}");
-                
-                // 根据官方文档的 SearchAsync API
-                var searchResult = await _client.SearchAsync(
-                    collectionName: targetCollection,
-                    vector: queryVector,
-                    limit: (ulong)limit,
-                    payloadSelector: new WithPayloadSelector { Enable = true }
-                );
-                
-                var results = new List<(string Id, float Score, Dictionary<string, object> Metadata)>();
-                
-                foreach (var point in searchResult)
-                {
-                    var metadata = new Dictionary<string, object>();
-                    foreach (var kvp in point.Payload)
-                    {
-                        var key = kvp.Key;
-                        var value = kvp.Value;
-                        
-                        metadata[key] = value.KindCase switch
-                        {
-                            Value.KindOneofCase.StringValue => value.StringValue,
-                            Value.KindOneofCase.IntegerValue => value.IntegerValue,
-                            Value.KindOneofCase.DoubleValue => value.DoubleValue,
-                            Value.KindOneofCase.BoolValue => value.BoolValue,
-                            _ => value.ToString()
-                        };
-                    }
-                    
-                    results.Add((point.Id.Uuid, point.Score, metadata));
-                }
-                
-                Console.WriteLine($"✅ 搜索完成: 找到 {results.Count} 个相似结果");
-                return results;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ 搜索失败: {ex.Message}");
-                throw;
-            }
-        }
-
-        /// <summary>
-        /// 删除集合
-        /// </summary>
-        public async Task DeleteCollectionAsync(string collectionName = null)
-        {
-            var targetCollection = collectionName ?? _collectionName;
-            
-            try
-            {
-                Console.WriteLine($"🗑️ 删除集合: {targetCollection}");
-                
-                await _client.DeleteCollectionAsync(targetCollection);
-                Console.WriteLine($"✅ 集合 {targetCollection} 删除成功");
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ 删除集合失败: {ex.Message}");
-                throw;
-            }
-        }
-
-        /// <summary>
-        /// 获取集合信息
-        /// </summary>
-        public async Task<CollectionInfo> GetCollectionInfoAsync(string collectionName = null)
-        {
-            var targetCollection = collectionName ?? _collectionName;
-            
-            try
-            {
-                Console.WriteLine($"ℹ️ 获取集合信息: {targetCollection}");
-                
-                var info = await _client.GetCollectionInfoAsync(targetCollection);
-                Console.WriteLine($"✅ 集合信息获取成功: 向量数量={info.PointsCount}");
-                
-                return info;
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"❌ 获取集合信息失败: {ex.Message}");
-                throw;
-            }
+            await UpsertPointsAsync(collectionName, batch);
         }
 
         public void Dispose()
         {
+            _http.Dispose();
             _client?.Dispose();
         }
     }
