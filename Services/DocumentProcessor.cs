@@ -14,7 +14,7 @@ namespace SemanticKernelAgent.Services
     public class DocumentProcessor
     {
         private readonly List<string> _supportedExtensions = new() { ".txt", ".md" };
-        private readonly string _knowledgeBasePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "Data");
+        private readonly string _knowledgeBasePath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "Data");
 
         /// <summary>
         /// 从文件路径加载文档
@@ -62,7 +62,7 @@ namespace SemanticKernelAgent.Services
         }
 
         /// <summary>
-        /// 加载知识库中的所有文档
+        /// 加载知识库中的所有文档（直接从 Data 目录加载）
         /// </summary>
         public async Task<List<DocumentInfo>> LoadKnowledgeBaseDocumentsAsync()
         {
@@ -78,17 +78,46 @@ namespace SemanticKernelAgent.Services
             var targetPath = directoryPath ?? _knowledgeBasePath;
             var documents = new List<DocumentInfo>();
 
+            Console.WriteLine($"🔍 当前工作目录: {Directory.GetCurrentDirectory()}");
+            Console.WriteLine($"🔍 BaseDirectory: {AppDomain.CurrentDomain.BaseDirectory}");
+            Console.WriteLine($"🔍 查找目录: {targetPath}");
+            Console.WriteLine($"🔍 目录完整路径: {Path.GetFullPath(targetPath)}");
+
             if (!Directory.Exists(targetPath))
             {
                 Console.WriteLine($"❌ 目录不存在: {targetPath}");
+                
+                // 尝试其他可能的路径
+                var altPath1 = Path.Combine(Directory.GetCurrentDirectory(), "Data");
+                var altPath2 = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "Data");
+                
+                Console.WriteLine($"🔍 尝试备用路径1: {altPath1} - 存在: {Directory.Exists(altPath1)}");
+                Console.WriteLine($"🔍 尝试备用路径2: {altPath2} - 存在: {Directory.Exists(altPath2)}");
+                
                 return documents;
             }
 
-            var files = Directory.GetFiles(targetPath, "*.*", SearchOption.AllDirectories)
+            // 列出目录中的所有文件
+            var allFiles = Directory.GetFiles(targetPath, "*.*", SearchOption.TopDirectoryOnly);
+            Console.WriteLine($"📁 目录中的所有文件 ({allFiles.Length}):");
+            foreach (var file in allFiles)
+            {
+                Console.WriteLine($"  - {Path.GetFileName(file)} (扩展名: {Path.GetExtension(file)})");
+            }
+
+            // 只查找当前目录的文件，不递归子目录（因为文件直接在 Data 目录中）
+            var files = Directory.GetFiles(targetPath, "*.*", SearchOption.TopDirectoryOnly)
                 .Where(f => _supportedExtensions.Contains(Path.GetExtension(f).ToLower()))
                 .ToList();
 
             Console.WriteLine($"📁 在目录 {targetPath} 中找到 {files.Count} 个支持的文档");
+            Console.WriteLine($"📁 支持的扩展名: {string.Join(", ", _supportedExtensions)}");
+            
+            // 打印找到的文件列表
+            foreach (var file in files)
+            {
+                Console.WriteLine($"  - 发现文件: {Path.GetFileName(file)}");
+            }
 
             foreach (var file in files)
             {

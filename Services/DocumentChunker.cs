@@ -1,26 +1,33 @@
 using SemanticKernelAgent.Models;
+using DotNetEnv;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Linq;
 
 namespace SemanticKernelAgent.Services
 {
     /// <summary>
-    /// 文档分块服务 - 负责将文档切分为小块
+    /// 文档分块服务 - 简化固定大小分块
     /// </summary>
     public class DocumentChunker
     {
-        private readonly ChunkingConfig _config;
+        private readonly int _chunkSize;
+        private readonly int _chunkOverlap;
 
-        public DocumentChunker(ChunkingConfig config)
+        public DocumentChunker()
         {
-            _config = config ?? throw new ArgumentNullException(nameof(config));
-            Console.WriteLine($"🔪 初始化文档分块器 - 块大小:{_config.ChunkSize}, 重叠:{_config.ChunkOverlap}");
+            // 从环境变量加载配置
+            Env.Load();
+            
+            _chunkSize = int.Parse(Environment.GetEnvironmentVariable("CHUNKING_CHUNK_SIZE") ?? "300");
+            var overlapPercent = int.Parse(Environment.GetEnvironmentVariable("CHUNKING_OVERLAP_PERCENT") ?? "10");
+            _chunkOverlap = _chunkSize * overlapPercent / 100;
+            
+            Console.WriteLine($"🔪 初始化文档分块器 - 块大小:{_chunkSize}, 重叠:{_chunkOverlap}字符({overlapPercent}%)");
         }
 
         /// <summary>
-        /// 对单个文档进行分块
+        /// 对单个文档进行分块 - 简化版本
         /// </summary>
         public ChunkingResult ChunkDocument(DocumentInfo document)
         {
@@ -28,19 +35,9 @@ namespace SemanticKernelAgent.Services
 
             try
             {
-                Console.WriteLine($"🔪 开始分块文档: {document.FileName}");
+                Console.WriteLine($"🔪 开始分块文档: {document.FileName} ({document.Content.Length} 字符)");
 
-                var chunks = new List<DocumentChunk>();
-                var warnings = new List<string>();
-
-                switch (_config.SplitStrategy.ToLower())
-                {
-                    case "fixed":
-                    default:
-                        chunks = CreateFixedSizeChunks(document, warnings);
-                        break;
-                }
-
+                var chunks = CreateSimpleFixedSizeChunks(document);
                 stopwatch.Stop();
 
                 var result = new ChunkingResult
@@ -49,19 +46,17 @@ namespace SemanticKernelAgent.Services
                     Chunks = chunks,
                     TotalChunks = chunks.Count,
                     ProcessingTime = stopwatch.Elapsed,
-                    Warnings = warnings,
+                    Warnings = new List<string>(),
                     Success = chunks.Count > 0
                 };
 
                 Console.WriteLine($"✅ 分块完成: {chunks.Count} 个块, 耗时: {stopwatch.ElapsedMilliseconds}ms");
-
-                // 显示分块统计
-                if (chunks.Count > 0)
+                
+                // 显示块大小分布
+                for (int i = 0; i < chunks.Count; i++)
                 {
-                    var avgSize = chunks.Average(c => c.CharacterCount);
-                    var minSize = chunks.Min(c => c.CharacterCount);
-                    var maxSize = chunks.Max(c => c.CharacterCount);
-                    Console.WriteLine($"📊 块大小统计 - 平均:{avgSize:F0}, 最小:{minSize}, 最大:{maxSize}");
+                    var chunk = chunks[i];
+                    Console.WriteLine($"  块 {i + 1}: 位置 {chunk.StartPosition}-{chunk.EndPosition}, 长度 {chunk.CharacterCount}");
                 }
 
                 return result;
@@ -82,98 +77,58 @@ namespace SemanticKernelAgent.Services
         }
 
         /// <summary>
-        /// 固定大小分块策略
+        /// 简单固定大小分块 - 从头到尾，最后一块可以是任意大小
         /// </summary>
-        private List<DocumentChunk> CreateFixedSizeChunks(DocumentInfo document, List<string> warnings)
+        private List<DocumentChunk> CreateSimpleFixedSizeChunks(DocumentInfo document)
         {
             var chunks = new List<DocumentChunk>();
             var content = document.Content;
-            var chunkIndex = 0;
             var position = 0;
+            var chunkIndex = 0;
 
             while (position < content.Length)
             {
-                var chunkSize = Math.Min(_config.ChunkSize, content.Length - position);
-                var endPos = position + chunkSize;
-
-                // 如果不是最后一块，尝试在分隔符处断开
-                if (endPos < content.Length)
-                {
-                    var betterEndPos = FindBestBreakPoint(content, position, endPos);
-                    if (betterEndPos > position)
-                    {
-                        endPos = betterEndPos;
-                        chunkSize = endPos - position;
-                    }
-                }
-
-                var chunkContent = content.Substring(position, chunkSize);
+                // 计算当前块的大小
+                var remainingLength = content.Length - position;
+                var currentChunkSize = Math.Min(_chunkSize, remainingLength);
                 
-                // 清理块内容
-                if (!_config.PreserveWhitespace)
-                {
-                    chunkContent = chunkContent.Trim();
-                }
-
-                // 跳过太小的块
-                if (chunkContent.Length < _config.MinChunkSize && position + chunkSize < content.Length)
-                {
-                    warnings.Add($"跳过过小的块 {chunkIndex}: {chunkContent.Length} 字符");
-                    position = Math.Max(position + 1, endPos - _config.ChunkOverlap);
-                    continue;
-                }
-
+                // 提取块内容
+                var chunkContent = content.Substring(position, currentChunkSize);
+                
+                // 创建块（不设置最小大小限制）
                 var chunk = new DocumentChunk
                 {
                     Content = chunkContent,
-                    SourceFile = document.FileName,
                     ChunkIndex = chunkIndex,
                     StartPosition = position,
-                    EndPosition = endPos,
+                    EndPosition = position + currentChunkSize,
                     CharacterCount = chunkContent.Length,
                     Metadata = new Dictionary<string, object>
                     {
-                        ["source_document_id"] = document.Id,
-                        ["chunk_strategy"] = _config.SplitStrategy,
-                        ["chunk_size_config"] = _config.ChunkSize,
-                        ["overlap_size"] = _config.ChunkOverlap
+                        ["source_document"] = document.FileName,
+                        ["chunk_size_config"] = _chunkSize,
+                        ["overlap_size"] = _chunkOverlap,
+                        ["is_last_chunk"] = (position + currentChunkSize >= content.Length)
                     }
                 };
 
                 chunks.Add(chunk);
                 chunkIndex++;
 
-                // 计算下一个位置（考虑重叠）
-                // 如果是最后一块，结束循环
-                if (endPos >= content.Length)
+                // 移动到下一个位置
+                if (position + currentChunkSize >= content.Length)
                 {
+                    // 已经到达文档末尾
                     break;
                 }
-                
-                // 正确计算下一个位置：当前块结束位置减去重叠大小
-                position = Math.Max(endPos - _config.ChunkOverlap, position + 1);
+                else
+                {
+                    // 移动位置，考虑重叠：下一块从 (当前位置 + 块大小 - 重叠大小) 开始
+                    position += (_chunkSize - _chunkOverlap);
+                }
             }
 
             return chunks;
-        }
-
-        /// <summary>
-        /// 寻找最佳断点位置
-        /// </summary>
-        private int FindBestBreakPoint(string content, int start, int preferredEnd)
-        {
-            var searchStart = Math.Max(start, preferredEnd - 100); // 在首选结束位置前100字符内搜索
-            
-            foreach (var separator in _config.SeparatorChars)
-            {
-                var lastIndex = content.LastIndexOf(separator, preferredEnd, preferredEnd - searchStart);
-                if (lastIndex > searchStart)
-                {
-                    return lastIndex + separator.Length;
-                }
-            }
-            
-            return preferredEnd;
         }
     }
 }
