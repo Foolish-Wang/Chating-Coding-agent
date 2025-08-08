@@ -9,6 +9,7 @@ using System.Threading.Tasks;
 using Qdrant.Client;          // 仍保留（未来可恢复 gRPC）
 using Qdrant.Client.Grpc;
 using DotNetEnv;
+using System.Linq;
 
 namespace SemanticKernelAgent.Services
 {
@@ -109,7 +110,7 @@ namespace SemanticKernelAgent.Services
         }
 
         /// <summary>
-        /// 创建默认集合（若不存在）
+        /// 创建默认集合（若不存在）(旧方法保留但不再直接用于动态维度场景)
         /// </summary>
         public async Task EnsureDefaultCollectionAsync(int vectorSize = 1536, Distance distance = Distance.Cosine)
         {
@@ -125,47 +126,78 @@ namespace SemanticKernelAgent.Services
                 vectors = new
                 {
                     size = vectorSize,
-                    distance = distance.ToString().ToLower()
+                    distance = distance.ToString() // 使用 Qdrant API 大小写：Cosine / Dot / Euclid
                 }
             };
             var json = JsonSerializer.Serialize(payload);
-            var resp = await _http.PutAsync(url, new StringContent(json, System.Text.Encoding.UTF8, "application/json"));
+            var resp = await _http.PutAsync(url, new StringContent(json, Encoding.UTF8, "application/json"));
+            if (!resp.IsSuccessStatusCode)
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                Console.WriteLine($"❌ 创建集合失败 HTTP {(int)resp.StatusCode}: {resp.StatusCode}");
+                Console.WriteLine($"📄 返回内容: {body}");
+            }
             resp.EnsureSuccessStatusCode();
-            Console.WriteLine($"✅ REST 创建集合成功：{_collectionName}");
+            Console.WriteLine($"✅ 创建集合成功：{_collectionName} (size={vectorSize})");
         }
 
         /// <summary>
-        /// 删除集合（REST）
+        /// 根据向量真实维度确保集合存在（推荐）
         /// </summary>
-        public async Task DeleteCollectionAsync(string name)
+        public async Task EnsureCollectionForVectorSizeAsync(int vectorSize, string? collectionName = null, Distance distance = Distance.Cosine)
         {
-            var resp = await _http.DeleteAsync($"{_baseUrl}/collections/{name}");
+            var name = collectionName ?? _collectionName;
+            if (await CollectionExistsAsync(name))
+            {
+                Console.WriteLine($"ℹ️ 集合已存在：{name}");
+                return;
+            }
+            var url = $"{_baseUrl}/collections/{name}";
+            var payload = new
+            {
+                vectors = new
+                {
+                    size = vectorSize,
+                    distance = distance.ToString()
+                }
+            };
+            var json = JsonSerializer.Serialize(payload);
+            var resp = await _http.PutAsync(url, new StringContent(json, Encoding.UTF8, "application/json"));
+            if (!resp.IsSuccessStatusCode)
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                Console.WriteLine($"❌ 创建集合失败 HTTP {(int)resp.StatusCode}: {resp.StatusCode}");
+                Console.WriteLine($"📄 返回内容: {body}");
+            }
             resp.EnsureSuccessStatusCode();
-            Console.WriteLine($"✅ REST 删除集合：{name}");
+            Console.WriteLine($"✅ 创建集合成功：{name} (size={vectorSize})");
         }
 
         /// <summary>
-        /// 向集合中批量写入点（向量 + 载荷），若集合不存在可先调用 EnsureDefaultCollectionAsync
-        /// REST: POST /collections/{collection}/points
+        /// 批量写入向量
         /// </summary>
         public async Task UpsertPointsAsync(
             string collectionName,
             IEnumerable<(string Id, float[] Vector, Dictionary<string, object> Payload)> points)
         {
-            var pointsArray = new List<object>();
-            foreach (var p in points)
+            var list = points.ToList();
+            if (list.Count == 0) return;
+
+            int dim = list[0].Vector.Length;
+            // 可选：检查集合是否存在；若不存在提醒
+            if (!await CollectionExistsAsync(collectionName))
             {
-                pointsArray.Add(new
-                {
-                    id = p.Id,
-                    vector = p.Vector,
-                    payload = p.Payload
-                });
+                throw new InvalidOperationException($"集合 {collectionName} 不存在，请先调用 EnsureCollectionForVectorSizeAsync({dim}).");
             }
 
             var body = new
             {
-                points = pointsArray
+                points = list.Select(p => new
+                {
+                    id = p.Id,
+                    vector = p.Vector,
+                    payload = p.Payload
+                })
             };
 
             var json = JsonSerializer.Serialize(body);
@@ -173,12 +205,18 @@ namespace SemanticKernelAgent.Services
                 $"{_baseUrl}/collections/{collectionName}/points",
                 new StringContent(json, Encoding.UTF8, "application/json"));
 
+            if (!resp.IsSuccessStatusCode)
+            {
+                var err = await resp.Content.ReadAsStringAsync();
+                Console.WriteLine($"❌ Upsert 失败 HTTP {(int)resp.StatusCode}: {resp.StatusCode}");
+                Console.WriteLine($"📄 返回: {err}");
+            }
             resp.EnsureSuccessStatusCode();
-            Console.WriteLine($"✅ 写入 {pointsArray.Count} 个向量到集合 {collectionName}");
+            Console.WriteLine($"✅ 写入 {list.Count} 个向量 (dim={dim}) 到 {collectionName}");
         }
 
         /// <summary>
-        /// 直接对文档分块及对应向量批量写入（对齐顺序）
+        /// 文档分块入库
         /// </summary>
         public async Task IngestDocumentChunksAsync(
             string collectionName,
@@ -187,14 +225,14 @@ namespace SemanticKernelAgent.Services
             IList<float[]> vectors)
         {
             if (chunks.Count != vectors.Count)
-                throw new InvalidOperationException("chunks 数量与 vectors 数量不匹配");
+                throw new InvalidOperationException("chunks 与 vectors 数量不一致");
 
-            var batch = new List<(string Id, float[] Vector, Dictionary<string, object> Payload)>();
+            var batch = new List<(string Id, float[] Vector, Dictionary<string, object> Payload)>(chunks.Count);
             for (int i = 0; i < chunks.Count; i++)
             {
                 var c = chunks[i];
                 batch.Add((
-                    Id: c.Id ?? SemanticKernelAgent.Services.RagUtils.GenerateChunkId(sourceFile, c.ChunkIndex),
+                    Id: $"{sourceFile}:{c.ChunkIndex}",
                     Vector: vectors[i],
                     Payload: new Dictionary<string, object>
                     {
@@ -209,6 +247,29 @@ namespace SemanticKernelAgent.Services
 
             await UpsertPointsAsync(collectionName, batch);
         }
+
+        public string DefaultCollectionName => _collectionName;
+
+        /// <summary>
+        /// 删除指定集合（REST）
+        /// </summary>
+        public async Task DeleteCollectionAsync(string name)
+        {
+            var resp = await _http.DeleteAsync($"{_baseUrl}/collections/{name}");
+            if (!resp.IsSuccessStatusCode)
+            {
+                var body = await resp.Content.ReadAsStringAsync();
+                Console.WriteLine($"⚠️ 删除集合失败 {name}: {(int)resp.StatusCode} {resp.StatusCode}");
+                Console.WriteLine($"📄 返回: {body}");
+            }
+            resp.EnsureSuccessStatusCode();
+            Console.WriteLine($"✅ 已删除集合：{name}");
+        }
+
+        /// <summary>
+        /// 删除默认集合（便于测试）
+        /// </summary>
+        public Task DeleteCollectionAsync() => DeleteCollectionAsync(_collectionName);
 
         public void Dispose()
         {
