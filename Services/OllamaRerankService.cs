@@ -6,7 +6,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
-using SemanticKernelAgent.Models;
+using Microsoft.SemanticKernel.ChatCompletion;
 
 namespace SemanticKernelAgent.Services
 {
@@ -15,8 +15,7 @@ namespace SemanticKernelAgent.Services
     /// </summary>
     public class OllamaRerankService
     {
-        private readonly IChatClient _chatClient;
-        private readonly string _modelId;
+        private readonly IChatCompletionService _chatService;
         
         public OllamaRerankService()
         {
@@ -24,98 +23,74 @@ namespace SemanticKernelAgent.Services
             Env.Load();
             
             var endpoint = Environment.GetEnvironmentVariable("OLLAMA_ENDPOINT");
-            _modelId = Environment.GetEnvironmentVariable("OLLAMA_RERANK_MODEL");
+            var modelId = Environment.GetEnvironmentVariable("OLLAMA_RERANK_MODEL");
             
-            try
-            {
-                // 创建 Kernel 并使用新的 API 添加 Ollama 聊天客户端
-                var builder = Kernel.CreateBuilder();
-                builder.AddOllamaChatCompletion(_modelId, new Uri(endpoint));
-                var kernel = builder.Build();
-                
-                // 获取聊天客户端
-                _chatClient = kernel.GetRequiredService<IChatClient>();
-            }
-            catch (Exception ex)
-            {
-                Console.WriteLine($"⚠️ Ollama 重排序服务初始化失败: {ex.Message}");
-                _chatClient = null;
-            }
+            // 创建 Kernel 并添加 Ollama 聊天服务
+            var builder = Kernel.CreateBuilder();
+            builder.AddOllamaChatCompletion(modelId, new Uri(endpoint));
+            var kernel = builder.Build();
+            
+            _chatService = kernel.GetRequiredService<IChatCompletionService>();
         }
 
         /// <summary>
-        /// 根据查询对文档块进行重排序
+        /// 对文档块进行重排序
         /// </summary>
-        /// <param name="query">查询文本，由调用方传入</param>
-        /// <param name="documents">待排序的文档块</param>
-        /// <returns>按相关性排序的文档块</returns>
-        public async Task<List<(string document, double score)>> RerankAsync(string query, List<string> documents)
+        /// <param name="query">查询文本</param>
+        /// <param name="documents">待重排序的文档块列表</param>
+        /// <returns>重排序后的文档块列表</returns>
+        public async Task<List<T>> RerankAsync<T>(string query, List<T> documents) where T : class
         {
-            if (_chatClient == null || documents?.Any() != true)
-                return new List<(string document, double score)>();
-
-            var results = new List<(string document, double score)>();
-            foreach (var document in documents)
+            if (documents == null || documents.Count == 0)
             {
-                var prompt = $@"请根据以下查询和文档的相关性进行评分：
+                return new List<T>();
+            }
 
-查询: {query}
-
-文档: {document}
-
-请仅返回一个0-1之间的相关性分数，不要包含任何其他文字或解释。";
-
-                var chatHistory = new List<ChatMessage>
-                {
-                    new ChatMessage(ChatRole.User, prompt)
-                };
+            var scoredDocuments = new List<(T Document, double Score)>();
+            
+            foreach (var doc in documents)
+            {
+                // 获取文档内容（假设文档对象有Content属性或ToString方法）
+                var content = GetDocumentContent(doc);
                 
-                var response = await _chatClient.CompleteAsync(chatHistory);
-                var content = response.Message.Text?.Trim() ?? "0";
+                // 创建重排序提示
+                var prompt = $"Query: {query}\nPassage: {content}\nRelevant:";
                 
-                if (double.TryParse(content, out double score))
+                // 调用模型获取相关性分数
+                var response = await _chatService.GetChatMessageContentAsync(prompt);
+                var scoreText = response.Content?.Trim();
+                
+                // 解析分数
+                if (double.TryParse(scoreText, out double score))
                 {
-                    score = Math.Max(0, Math.Min(1, score));
-                    results.Add((document, score));
+                    scoredDocuments.Add((doc, score));
                 }
                 else
                 {
-                    results.Add((document, 0.0));
+                    scoredDocuments.Add((doc, 0.0));
                 }
             }
-            return results.OrderByDescending(r => r.score).ToList();
+            
+            // 按分数降序排序并返回文档列表
+            return scoredDocuments.OrderByDescending(x => x.Score)
+                                 .Select(x => x.Document)
+                                 .ToList();
         }
 
         /// <summary>
-        /// 根据查询对检索结果进行重排序
+        /// 获取文档内容
         /// </summary>
-        /// <param name="query">查询文本，由调用方传入</param>
-        /// <param name="searchResults">检索结果</param>
-        /// <returns>按相关性排序的检索结果</returns>
-        public async Task<List<RerankResult>> RerankSearchResultsAsync(string query, List<SearchResult> searchResults)
+        private string GetDocumentContent<T>(T document)
         {
-            if (searchResults?.Any() != true)
-                return new List<RerankResult>();
-
-            var documents = searchResults.Select(sr => sr.Content).ToList();
-            var reranked = await RerankAsync(query, documents);
-
-            var results = new List<RerankResult>();
-            for (int i = 0; i < searchResults.Count; i++)
+            // 尝试通过反射获取Content属性
+            var contentProperty = typeof(T).GetProperty("Content");
+            if (contentProperty != null)
             {
-                var original = searchResults[i];
-                var rerankedItem = reranked.FirstOrDefault(r => r.document == original.Content);
-
-                results.Add(new RerankResult
-                {
-                    ChunkId = original.ChunkId,
-                    Content = original.Content,
-                    OriginalScore = original.Score,
-                    RerankScore = (float)rerankedItem.score,
-                    Metadata = original.Metadata
-                });
+                return contentProperty.GetValue(document)?.ToString() ?? "";
             }
-            return results.OrderByDescending(r => r.RerankScore).ToList();
+            
+            // 如果没有Content属性，使用ToString方法
+            return document?.ToString() ?? "";
         }
     }
 }
