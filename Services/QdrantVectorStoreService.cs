@@ -73,5 +73,16 @@ namespace SkAgent.Services
                 ((double)p.Score, p.Payload["text"].StringValue)
             ).ToList();
         }
+
+        //后续增加的
+        public async Task<IReadOnlyList<string>> ListCollectionsAsync()
+        {
+            return await _client.ListCollectionsAsync();
+        }
+
+        public async Task DeleteCollectionAsync(string collectionName)
+        {
+            await _client.DeleteCollectionAsync(collectionName);
+        }
     }
 }
