@@ -59,18 +59,18 @@ namespace SkAgent.Services
             var results = await _client.SearchAsync(_collectionName, queryVector, limit: (uint)limit);
 
             return results.Select(p =>
-                (p.Score, p.Payload["catg"].StringValue, p.Payload["text"].StringValue)
+                ((double)p.Score, p.Payload["catg"].StringValue, p.Payload["text"].StringValue)
             ).ToList();
         }
 
         public async Task<List<(double Score, string Text)>> SearchByCategoryAsync(string query, string category, Func<string, float[]> embeddingFunc, int limit = 3)
         {
             var queryVector = embeddingFunc(query);
-            var filter = Qdrant.Client.Grpc.Conditions.MatchText("catg", category);
+            var filter = Conditions.MatchText("catg", category);
             var results = await _client.SearchAsync(_collectionName, queryVector, filter: filter, limit: (uint)limit);
 
             return results.Select(p =>
-                (p.Score, p.Payload["text"].StringValue)
+                ((double)p.Score, p.Payload["text"].StringValue)
             ).ToList();
         }
     }
