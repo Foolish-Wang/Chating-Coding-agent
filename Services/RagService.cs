@@ -97,7 +97,7 @@ namespace SemanticKernelAgent.Services
                 .Select(r => new { Category = r.Category, Content = r.Text })
                 .ToList();
 
-            var rerankResults = await _reranker.RerankAsync(query, docBlocks);
+            var rerankResults = await _reranker.RerankAsync(query, docBlocks, topM);
 
             var mergedContent = "";
             for (int i = 0; i < Math.Min(topM, rerankResults.Count); i++)

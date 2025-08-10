@@ -24,7 +24,7 @@ namespace SemanticKernelAgent.Services
             _model = Environment.GetEnvironmentVariable("RERANK_MODEL");
         }
 
-        public async Task<List<(T Document, float Score)>> RerankAsync<T>(string query, List<T> documents) where T : class
+        public async Task<List<(T Document, float Score)>> RerankAsync<T>(string query, List<T> documents, int topM = 3) where T : class
         {
             if (documents == null || documents.Count == 0)
                 return new List<(T, float)>();
@@ -86,8 +86,7 @@ namespace SemanticKernelAgent.Services
             }
 
             // 新增：打印重排后获取的文档块数量及每个文档块的开头和结尾
-            int topM = 3; // 或通过参数传入
-            Console.WriteLine($"[RerankService] 重排后共获取到 {resultList.Count} 个文档块，实际取前 {topM} 个用于拼接。");
+            Console.WriteLine($"[RerankService] 使用搜索到的前 {resultList.Count} 个文档块用于重排，实际取重拍后前 {topM} 个用于拼接。");
             for (int i = 0; i < Math.Min(topM, resultList.Count); i++)
             {
                 var (doc, score) = resultList[i];
@@ -96,6 +95,8 @@ namespace SemanticKernelAgent.Services
                 string end = content.Length > 30 ? content.Substring(content.Length - 30) : content;
                 Console.WriteLine($"[{i + 1}] 分数: {score:0.0000} 开头: {start} ... 结尾: {end}");
             }
+            Console.WriteLine("✅以上是重排序后获取到的文档块。");
+            Console.WriteLine("------------------------------------------------------------------------------------------------------------------");
 
             return resultList;
         }
