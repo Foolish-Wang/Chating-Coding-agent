@@ -3,8 +3,6 @@ using System;
 using System.Linq;
 using System.Threading.Tasks;
 
-#pragma warning disable SKEXP0070
-
 namespace SemanticKernelAgent.Services
 {
     /// <summary>

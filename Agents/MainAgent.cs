@@ -3,11 +3,8 @@ using Microsoft.SemanticKernel.ChatCompletion;
 using Microsoft.SemanticKernel.Connectors.OpenAI;
 using SemanticKernelAgent.Services;
 using SemanticKernelAgent.Models;
-using SemanticKernelAgent.Plugins;
 using System.Threading.Tasks;
 using System;
-
-#pragma warning disable SKEXP0070
 
 namespace SemanticKernelAgent.Agents
 {

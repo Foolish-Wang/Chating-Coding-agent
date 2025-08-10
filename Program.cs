@@ -6,8 +6,6 @@ using SemanticKernelAgent.Models;
 using SemanticKernelAgent.Services;
 using SemanticKernelAgent.Agents;
 
-#pragma warning disable SKEXP0070
-
 namespace SemanticKernelAgent
 {
     class Program

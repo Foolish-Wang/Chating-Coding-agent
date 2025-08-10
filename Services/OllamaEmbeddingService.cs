@@ -1,5 +1,4 @@
 using Microsoft.SemanticKernel;
-using Microsoft.SemanticKernel.Connectors.Ollama;
 using Microsoft.Extensions.AI;
 using DotNetEnv;
 using System;

@@ -1,13 +1,10 @@
 using Microsoft.SemanticKernel;
 using Microsoft.SemanticKernel.ChatCompletion;
-using Microsoft.SemanticKernel.Connectors.Google;
 using SemanticKernelAgent.Services;
 using SemanticKernelAgent.Models;
 using System.Threading.Tasks;
 using System.Linq;
 using System;
-
-#pragma warning disable SKEXP0070
 
 namespace SemanticKernelAgent.Agents
 {
