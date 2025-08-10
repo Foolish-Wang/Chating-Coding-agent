@@ -1,6 +1,6 @@
 # Semantic Kernel Multi-Agent System
 
-一个基于 Microsoft Semantic Kernel 构建的智能多 Agent 系统，具备文件操作、网络搜索、命令行执行等多种能力，采用 ReAct 模式进行推理和执行，并集成了 Gemini 验证 Agent 进行结果质量保证。
+一个基于 Microsoft Semantic Kernel 构建的智能多 Agent 系统，具备文件操作、网络搜索、命令行执行、知识库增强等多种能力，采用 ReAct 模式进行推理和执行，并集成了 Gemini 验证 Agent 进行结果质量保证。
 
 ## 🌟 特性
 
@@ -8,6 +8,7 @@
 - **智能验证系统**：自动验证任务完成质量并提供改进建议
 - **ReAct 模式推理**：可视化的思考-行动-观察循环
 - **Tavily 智能搜索**：基于 AI 增强的搜索引擎，获取最新准确信息
+- **知识库增强（RAG）**：利用本地文档和知识库增强 AI 回答的准确性和相关性
 - **多插件支持**：文件操作、网络搜索、CLI 执行、系统信息获取
 - **动态提示管理**：支持运行时重新加载系统提示
 - **跨平台 CLI 支持**：智能选择 Windows PowerShell 或 Unix Shell
@@ -38,6 +39,7 @@ sk-agent/
 ├── Services/                       # 服务层
 │   ├── MultiAgentCoordinator.cs   # 多Agent协调服务
 │   ├── PromptManager.cs           # 提示管理服务
+│   ├── RagService.cs              # RAG服务
 │   └── ReActLoggingFilter.cs      # ReAct日志过滤器
 ├── Plugins/                        # 插件系统
 │   ├── FilePlugin.cs              # 文件操作插件
@@ -47,6 +49,8 @@ sk-agent/
 ├── Prompts/                        # 系统提示
 │   ├── SystemPrompt.md            # 主Agent系统提示
 │   └── ValidationSystemPrompt.md  # 验证Agent系统提示
+├── Data/                          # 本地数据和知识库
+│   └── *                          # 本地文档和数据文件
 ├── .env                           # 环境变量配置
 └── README.md                      # 项目说明
 ```
@@ -90,7 +94,29 @@ GEMINI_MODEL_ID=gemini-2.5-flash
 
 # 搜索服务配置 (Tavily)
 TAVILY_API_KEY=your_tavily_api_key_here
+
+# 向量数据库配置 (Qdrant)
+QDRANT_CLOUD_HOST=your_qdrant_host
+
+# Ollama 配置
+OLLAMA_ENDPOINT=your_ollama_endpoint
+OLLAMA_EMBEDDING_MODEL=your_embedding_model
+
+# 重排模型
+API_KEY=your_infini_api
+DEFAULT_BASE_URL=https://cloud.infini-ai.com/maas/v1
+RERANK_MODEL=your_infini_rerank_model
+
+# 分块配置 - 简化固定大小策略
+CHUNKING_CHUNK_SIZE=150
+CHUNKING_OVERLAP_PERCENT=30
+
+# 搜索配置
+SEARCH_TOP_K=15
+SEARCH_RERANK_TOP_M=8
 ```
+
+**说明**：Qdrant 向量数据库可以使用 docker 进行部署或者使用 Qdrant_cloud（可能需要配置 API）。由于 Ollama 暂不支持重排模型，我选择使用 infini-ai 的 API，调用 bge-reranker-v2-m3 对文档块进行重排序。分块与搜索参数请根据具体情况调整。
 
 4. 运行项目
 
@@ -167,6 +193,16 @@ GetRecommendedCliTool()              // 获取推荐CLI工具
 - **多源整合**：从多个可靠源获取信息
 - **深度搜索**：包含原始网页内容和图片
 
+### 知识库增强 (RAG)
+
+集成了基于 Qdrant 向量数据库的 RAG（Retrieval-Augmented Generation）功能，提供：
+
+- **本地知识库检索**：利用本地文档和数据增强 AI 回答
+- **向量搜索**：基于语义相似度的高效检索
+- **动态知识更新**：支持实时添加和更新知识库内容
+- **混合搜索模式**：结合关键词搜索和向量搜索的优势
+- **上下文增强**：将检索到的知识作为上下文提供给 AI 模型
+
 ### 动态提示管理
 
 - 支持 Markdown 格式的系统提示文件
@@ -218,6 +254,8 @@ GetRecommendedCliTool()              // 获取推荐CLI工具
 | `GEMINI_API_KEY`    | Google Gemini API 密钥 | ❌   | - (无则禁用验证 Agent) |
 | `GEMINI_MODEL_ID`   | Gemini 模型 ID         | ❌   | -                      |
 | `TAVILY_API_KEY`    | Tavily 搜索 API 密钥   | ❌   | - (无则搜索功能受限)   |
+| `QDRANT_ENDPOINT`   | Qdrant 向量数据库端点  | ❌   | - (无则 RAG 功能受限)  |
+| `QDRANT_API_KEY`    | Qdrant API 密钥        | ❌   | - (无则 RAG 功能受限)  |
 
 ### 执行设置
 
@@ -310,10 +348,19 @@ public async Task<string> YourFunctionAsync(string parameter)
 }
 ```
 
+### 使用 RAG 功能
+
+1. 将 TXT 文件添加到 `Data/` 目录
+2. 系统会自动处理并索引这些文件
+3. 在对话中选择启用 RAG 模式
+4. AI 将会结合知识库内容提供更准确的回答
+
 ## 📦 依赖项
 
 - **Microsoft.SemanticKernel** (1.61.0) - 核心 AI 框架
 - **Microsoft.SemanticKernel.Connectors.Google** (1.0.1) - Gemini 连接器
+- **Microsoft.SemanticKernel.Connectors.Qdrant** (1.61.0-preview) - Qdrant 向量数据库连接器
+- **Qdrant.Client** (1.15.0) - Qdrant 客户端
 - **DotNetEnv** (3.1.1) - 环境变量管理
 - **System.Text.Json** (8.0.0) - JSON 序列化
 
@@ -323,6 +370,7 @@ public async Task<string> YourFunctionAsync(string parameter)
 2. **网络依赖**：Tavily 搜索需要稳定的网络连接
 3. **模型选择**：根据任务复杂度选择合适的模型
 4. **错误处理**：系统具备完善的错误恢复机制
+5. **RAG 功能**：使用 RAG 功能需要配置 Qdrant 向量数据库
 
 ## 🤝 贡献
 
@@ -345,6 +393,9 @@ public async Task<string> YourFunctionAsync(string parameter)
 - [DeepSeek](https://www.deepseek.com/) - 主 Agent 模型服务
 - [Google Gemini](https://ai.google.dev/) - 验证 Agent 服务
 - [Tavily](https://tavily.com/) - AI 增强搜索服务
+- [Qwen](https://qwen.ai) - Embedding 模型
+- [Qdrant](https://qdrant.tech/) - 向量数据库
+- [Infinigence AI](https://cloud.infini-ai.com/platform/ai) - Rerank 模型
 
 ---
 
