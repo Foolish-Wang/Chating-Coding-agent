@@ -39,6 +39,8 @@ namespace SemanticKernelAgent.Services
 
             Console.WriteLine($"📚 共找到 {documents.Count} 个文档");
 
+            // 收集所有分块
+            var allChunks = new List<(string Category, string Text)>();
             foreach (var doc in documents)
             {
                 var chunkResult = _chunker.ChunkDocument(doc);
@@ -53,15 +55,20 @@ namespace SemanticKernelAgent.Services
                     var vector = await _embedder.EmbedAsync(chunk.Content);
                 }
 
-                try
-                {
-                    var items = chunkResult.Chunks.Select(chunk => (Category: doc.FileName, Text: chunk.Content));
-                    await _qdrant.InsertTextsAsync(items, text => _embedder.EmbedAsync(text).Result);
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"❌ 写入 Qdrant 失败（文档: {doc.FileName}）: {ex.Message}");
-                }
+                var items = chunkResult.Chunks.Select(chunk => (Category: doc.FileName, Text: chunk.Content));
+                allChunks.AddRange(items);
+            }
+
+            Console.WriteLine($"✅ 共收集到 {allChunks.Count} 个文档块，准备写入 Qdrant...");
+
+            try
+            {
+                await _qdrant.InsertTextsAsync(allChunks, text => _embedder.EmbedAsync(text).Result);
+                Console.WriteLine($"✅ 已写入 {allChunks.Count} 个文档块到 Qdrant。");
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"❌ 批量写入 Qdrant 失败: {ex.Message}");
             }
 
             Console.WriteLine("✅ 文档处理与向量化完成");
