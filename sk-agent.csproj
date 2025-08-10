@@ -5,6 +5,7 @@
     <TargetFramework>net8.0</TargetFramework>
     <RootNamespace>SemanticKernelAgent</RootNamespace>
     <AssemblyName>sk-agent</AssemblyName>
+    <DisableImplicitProgramMain>true</DisableImplicitProgramMain>
   </PropertyGroup>
 
   <ItemGroup>
