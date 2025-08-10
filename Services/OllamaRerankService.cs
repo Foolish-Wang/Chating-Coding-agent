@@ -1,95 +1,84 @@
-using Microsoft.SemanticKernel;
-using Microsoft.SemanticKernel.Connectors.Ollama;
-using Microsoft.Extensions.AI;
-using DotNetEnv;
 using System;
 using System.Collections.Generic;
-using System.Linq;
+using System.Net.Http;
+using System.Text;
+using System.Text.Json;
 using System.Threading.Tasks;
-using Microsoft.SemanticKernel.ChatCompletion;
 
 namespace SemanticKernelAgent.Services
 {
     /// <summary>
-    /// Ollama 重排序服务
+    /// Ollama rerank服务：用chat/generate接口让模型输出分数
     /// </summary>
     public class OllamaRerankService
     {
-        private readonly IChatCompletionService _chatService;
-        
+        private readonly string _endpoint;
+        private readonly string _model;
+
         public OllamaRerankService()
         {
-            // 加载 .env 文件
-            Env.Load();
-            
-            var endpoint = Environment.GetEnvironmentVariable("OLLAMA_ENDPOINT");
-            var modelId = Environment.GetEnvironmentVariable("OLLAMA_RERANK_MODEL");
-            
-            // 创建 Kernel 并添加 Ollama 聊天服务
-            var builder = Kernel.CreateBuilder();
-            builder.AddOllamaChatCompletion(modelId, new Uri(endpoint));
-            var kernel = builder.Build();
-            
-            _chatService = kernel.GetRequiredService<IChatCompletionService>();
+            _endpoint = Environment.GetEnvironmentVariable("OLLAMA_ENDPOINT");
+            _model = Environment.GetEnvironmentVariable("OLLAMA_RERANK_MODEL");
         }
 
-        /// <summary>
-        /// 对文档块进行重排序
-        /// </summary>
-        /// <param name="query">查询文本</param>
-        /// <param name="documents">待重排序的文档块列表</param>
-        /// <returns>重排序后的文档块列表</returns>
-        public async Task<List<T>> RerankAsync<T>(string query, List<T> documents) where T : class
+        public async Task<List<(T Document, float Score)>> RerankAsync<T>(string query, List<T> documents) where T : class
         {
             if (documents == null || documents.Count == 0)
+                return new List<(T, float)>();
+
+            // 构造 prompt，让模型输出每个文档的相关性分数
+            var sb = new StringBuilder();
+            sb.AppendLine($"请根据查询“{query}”对下列文档相关性打分（0-1之间的小数，1为最相关），输出格式为一行一个分数：");
+            for (int i = 0; i < documents.Count; i++)
             {
-                return new List<T>();
+                sb.AppendLine($"[{i + 1}] {GetDocumentContent(documents[i])}");
+            }
+            sb.AppendLine("请只输出分数，每行一个。");
+
+            var payload = new
+            {
+                model = _model,
+                prompt = sb.ToString(),
+                stream = false
+            };
+
+            using var client = new HttpClient();
+            var response = await client.PostAsync(
+                $"{_endpoint.TrimEnd('/')}/api/generate",
+                new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
+            );
+            response.EnsureSuccessStatusCode();
+
+            var result = await response.Content.ReadAsStringAsync();
+            var json = JsonDocument.Parse(result).RootElement;
+            var responseText = json.GetProperty("response").GetString();
+
+            // 解析分数
+            var lines = responseText.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            var scores = new List<float>();
+            foreach (var line in lines)
+            {
+                if (float.TryParse(line.Trim(), out var score))
+                    scores.Add(score);
             }
 
-            var scoredDocuments = new List<(T Document, double Score)>();
-            
-            foreach (var doc in documents)
+            // 关联文档和分数
+            var resultList = new List<(T, float)>();
+            for (int i = 0; i < Math.Min(documents.Count, scores.Count); i++)
             {
-                // 获取文档内容（假设文档对象有Content属性或ToString方法）
-                var content = GetDocumentContent(doc);
-                
-                // 创建重排序提示
-                var prompt = $"Query: {query}\nPassage: {content}\nRelevant:";
-                
-                // 调用模型获取相关性分数
-                var response = await _chatService.GetChatMessageContentAsync(prompt);
-                var scoreText = response.Content?.Trim();
-                
-                // 解析分数
-                if (double.TryParse(scoreText, out double score))
-                {
-                    scoredDocuments.Add((doc, score));
-                }
-                else
-                {
-                    scoredDocuments.Add((doc, 0.0));
-                }
+                resultList.Add((documents[i], scores[i]));
             }
-            
-            // 按分数降序排序并返回文档列表
-            return scoredDocuments.OrderByDescending(x => x.Score)
-                                 .Select(x => x.Document)
-                                 .ToList();
+
+            // 按分数降序排序
+            resultList.Sort((a, b) => b.Item2.CompareTo(a.Item2));
+            return resultList;
         }
 
-        /// <summary>
-        /// 获取文档内容
-        /// </summary>
         private string GetDocumentContent<T>(T document)
         {
-            // 尝试通过反射获取Content属性
             var contentProperty = typeof(T).GetProperty("Content");
             if (contentProperty != null)
-            {
                 return contentProperty.GetValue(document)?.ToString() ?? "";
-            }
-            
-            // 如果没有Content属性，使用ToString方法
             return document?.ToString() ?? "";
         }
     }
