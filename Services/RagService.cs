@@ -21,7 +21,10 @@ namespace SemanticKernelAgent.Services
             _qdrant = new QdrantVectorStoreService("localhost", 6334, collectionName, vectorSize);
         }
 
-        public async Task RunAsync()
+        /// <summary>
+        /// 执行RAG流程，返回拼接后的大文档块
+        /// </summary>
+        public async Task<string> RunAsync()
         {
             Console.WriteLine("📄 文档加载 + 分块 + 向量化测试开始");
 
@@ -31,7 +34,7 @@ namespace SemanticKernelAgent.Services
             if (documents == null || documents.Count == 0)
             {
                 Console.WriteLine("⚠️ 未找到任何文档，跳过流程");
-                return;
+                return string.Empty;
             }
 
             Console.WriteLine($"📚 共找到 {documents.Count} 个文档");
@@ -96,11 +99,14 @@ namespace SemanticKernelAgent.Services
             var rerankResults = await _reranker.RerankAsync(query, docBlocks);
 
             Console.WriteLine($"🔝 Rerank后Top{topM}文档块：");
+            var mergedContent = "";
             for (int i = 0; i < Math.Min(topM, rerankResults.Count); i++)
             {
                 var (block, score) = rerankResults[i];
-                Console.WriteLine($"{i + 1}. 分数: {score:0.0000} 文档: {block.Category} 内容: {block.Content}");
+                mergedContent += block.Content;
             }
+
+            return mergedContent;
         }
     }
 }
