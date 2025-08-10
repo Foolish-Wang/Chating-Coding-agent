@@ -174,6 +174,8 @@ namespace SemanticKernelAgent
         {
             Console.WriteLine("\n💡 提示：输入 'reload-prompt' 重新加载系统提示，输入 'exit' 退出\n");
 
+            bool ragPrepared = false;
+
             while (true)
             {
                 Console.Write("User > ");
@@ -195,7 +197,13 @@ namespace SemanticKernelAgent
                     string finalInput = input;
                     if (useRag && ragService != null)
                     {
-                        var ragContent = await ragService.RunAsync(input); // 传入query
+                        // 首次query前准备知识库
+                        if (!ragPrepared)
+                        {
+                            await ragService.PrepareKnowledgeBaseAsync();
+                            ragPrepared = true;
+                        }
+                        var ragContent = await ragService.QueryAsync(input); // 传入query
                         if (!string.IsNullOrWhiteSpace(ragContent))
                         {
                             finalInput = $"{input}\n\n【知识库补充内容】\n{ragContent}";

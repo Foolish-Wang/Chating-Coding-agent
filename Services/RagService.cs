@@ -22,9 +22,9 @@ namespace SemanticKernelAgent.Services
         }
 
         /// <summary>
-        /// 执行RAG流程，返回拼接后的大文档块
+        /// 仅执行一次：文档加载、分块、向量化并写入Qdrant
         /// </summary>
-        public async Task<string> RunAsync(string query)
+        public async Task PrepareKnowledgeBaseAsync()
         {
             Console.WriteLine("📄 文档加载 + 分块 + 向量化测试开始");
 
@@ -34,7 +34,7 @@ namespace SemanticKernelAgent.Services
             if (documents == null || documents.Count == 0)
             {
                 Console.WriteLine("⚠️ 未找到任何文档，跳过流程");
-                return string.Empty;
+                return;
             }
 
             Console.WriteLine($"📚 共找到 {documents.Count} 个文档");
@@ -72,7 +72,13 @@ namespace SemanticKernelAgent.Services
             }
 
             Console.WriteLine("✅ 文档处理与向量化完成");
+        }
 
+        /// <summary>
+        /// 每次query调用：向量检索、重排、拼接
+        /// </summary>
+        public async Task<string> QueryAsync(string query)
+        {
             // 查询 topK
             var topKStr = Environment.GetEnvironmentVariable("SEARCH_TOP_K");
             int topK = 5;
