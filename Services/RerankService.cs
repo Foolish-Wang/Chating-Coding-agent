@@ -8,17 +8,19 @@ using System.Threading.Tasks;
 namespace SemanticKernelAgent.Services
 {
     /// <summary>
-    /// Ollama rerank服务：用chat/generate接口让模型输出分数
+    /// Infini-AI rerank服务：调用云端API获取相关性分数
     /// </summary>
-    public class OllamaRerankService
+    public class RerankService
     {
         private readonly string _endpoint;
+        private readonly string _apiKey;
         private readonly string _model;
 
-        public OllamaRerankService()
+        public RerankService()
         {
-            _endpoint = Environment.GetEnvironmentVariable("OLLAMA_ENDPOINT");
-            _model = Environment.GetEnvironmentVariable("OLLAMA_RERANK_MODEL");
+            _endpoint = Environment.GetEnvironmentVariable("DEFAULT_BASE_URL")?.TrimEnd('/') + "/rerank";
+            _apiKey = Environment.GetEnvironmentVariable("API_KEY");
+            _model = Environment.GetEnvironmentVariable("RERANK_MODEL");
         }
 
         public async Task<List<(T Document, float Score)>> RerankAsync<T>(string query, List<T> documents) where T : class
@@ -26,43 +28,36 @@ namespace SemanticKernelAgent.Services
             if (documents == null || documents.Count == 0)
                 return new List<(T, float)>();
 
-            // 构造 prompt，让模型输出每个文档的相关性分数
-            var sb = new StringBuilder();
-            sb.AppendLine($"请根据查询“{query}”对下列文档相关性打分（0-1之间的小数，1为最相关），输出格式为一行一个分数：");
-            for (int i = 0; i < documents.Count; i++)
+            var docContents = new List<string>();
+            foreach (var doc in documents)
             {
-                sb.AppendLine($"[{i + 1}] {GetDocumentContent(documents[i])}");
+                docContents.Add(GetDocumentContent(doc));
             }
-            sb.AppendLine("请只输出分数，每行一个。");
 
             var payload = new
             {
                 model = _model,
-                prompt = sb.ToString(),
-                stream = false
+                query = query,
+                documents = docContents
             };
 
             using var client = new HttpClient();
+            client.DefaultRequestHeaders.Add("Authorization", $"Bearer {_apiKey}");
+
             var response = await client.PostAsync(
-                $"{_endpoint.TrimEnd('/')}/api/generate",
+                _endpoint,
                 new StringContent(JsonSerializer.Serialize(payload), Encoding.UTF8, "application/json")
             );
             response.EnsureSuccessStatusCode();
 
             var result = await response.Content.ReadAsStringAsync();
-            var json = JsonDocument.Parse(result).RootElement;
-            var responseText = json.GetProperty("response").GetString();
-
-            // 解析分数
-            var lines = responseText.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+            using var docJson = JsonDocument.Parse(result);
             var scores = new List<float>();
-            foreach (var line in lines)
+            foreach (var item in docJson.RootElement.GetProperty("results").EnumerateArray())
             {
-                if (float.TryParse(line.Trim(), out var score))
-                    scores.Add(score);
+                scores.Add(item.GetProperty("score").GetSingle());
             }
 
-            // 关联文档和分数
             var resultList = new List<(T, float)>();
             for (int i = 0; i < Math.Min(documents.Count, scores.Count); i++)
             {

@@ -19,8 +19,8 @@ namespace SemanticKernelAgent.Services
             // 从环境变量加载配置
             Env.Load();
             
-            _chunkSize = int.Parse(Environment.GetEnvironmentVariable("CHUNKING_CHUNK_SIZE") ?? "300");
-            var overlapPercent = int.Parse(Environment.GetEnvironmentVariable("CHUNKING_OVERLAP_PERCENT") ?? "10");
+            _chunkSize = int.Parse(Environment.GetEnvironmentVariable("CHUNKING_CHUNK_SIZE"));
+            var overlapPercent = int.Parse(Environment.GetEnvironmentVariable("CHUNKING_OVERLAP_PERCENT"));
             _chunkOverlap = _chunkSize * overlapPercent / 100;
             
             Console.WriteLine($"🔪 初始化文档分块器 - 块大小:{_chunkSize}, 重叠:{_chunkOverlap}字符({overlapPercent}%)");
