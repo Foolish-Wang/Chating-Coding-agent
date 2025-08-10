@@ -51,7 +51,7 @@ namespace SemanticKernelAgent
                 string ragChoice;
                 while (true)
                 {
-                    Console.WriteLine("是否启用知识库增强（RAG）？(y/n): ");
+                    Console.WriteLine("是否启用知识库增强（RAG）？(y/n), 想退出程序请输入 'exit' : ");
                     ragChoice = Console.ReadLine()?.Trim().ToLower();
                     if (ragChoice == "y" || ragChoice == "n" || ragChoice == "exit")
                         break;
