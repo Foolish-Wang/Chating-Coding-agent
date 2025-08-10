@@ -32,6 +32,7 @@ sk-agent/
 ├── Program.cs                      # 主程序入口
 ├── Models/                         # 数据模型
 │   ├── AgentConfig.cs             # Agent配置模型
+│   ├── DocumentModels.cs          # 文档处理相关模型
 │   └── ValidationModels.cs        # 验证相关数据模型
 ├── Agents/                         # Agent实现
 │   ├── MainAgent.cs               # 主Agent实现
@@ -39,7 +40,12 @@ sk-agent/
 ├── Services/                       # 服务层
 │   ├── MultiAgentCoordinator.cs   # 多Agent协调服务
 │   ├── PromptManager.cs           # 提示管理服务
-│   ├── RagService.cs              # RAG服务
+│   ├── RagService.cs              # RAG综合服务
+│   ├── DocumentProcessor.cs       # 文档处理服务
+│   ├── DocumentChunker.cs         # 文档分块服务
+│   ├── QdrantVectorStoreService.cs # Qdrant向量存储服务
+│   ├── OllamaEmbeddingService.cs  # Ollama嵌入服务
+│   ├── RerankService.cs           # 重排序服务
 │   └── ReActLoggingFilter.cs      # ReAct日志过滤器
 ├── Plugins/                        # 插件系统
 │   ├── FilePlugin.cs              # 文件操作插件
