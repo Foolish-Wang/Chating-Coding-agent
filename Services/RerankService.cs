@@ -4,6 +4,7 @@ using System.Net.Http;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
+using System.Linq;
 
 namespace SemanticKernelAgent.Services
 {
@@ -38,7 +39,8 @@ namespace SemanticKernelAgent.Services
             {
                 model = _model,
                 query = query,
-                documents = docContents
+                documents = docContents,
+                return_documents = true
             };
 
             using var client = new HttpClient();
@@ -52,20 +54,37 @@ namespace SemanticKernelAgent.Services
 
             var result = await response.Content.ReadAsStringAsync();
             using var docJson = JsonDocument.Parse(result);
-            var scores = new List<float>();
-            foreach (var item in docJson.RootElement.GetProperty("results").EnumerateArray())
+
+            if (!docJson.RootElement.TryGetProperty("results", out var resultsElement) || resultsElement.ValueKind != JsonValueKind.Array)
             {
-                scores.Add(item.GetProperty("score").GetSingle());
+                Console.WriteLine("Rerank API response: " + result);
+                throw new Exception("Rerank API response does not contain 'results' array.");
             }
 
+            // 解析 index 和 relevance_score
+            var scoredList = new List<(int Index, float Score)>();
+            foreach (var item in resultsElement.EnumerateArray())
+            {
+                if (!item.TryGetProperty("index", out var idxElem) || !item.TryGetProperty("relevance_score", out var scoreElem))
+                {
+                    Console.WriteLine("Rerank API item: " + item.ToString());
+                    throw new Exception("Rerank API result item does not contain 'index' or 'relevance_score'.");
+                }
+                int idx = idxElem.GetInt32();
+                float score = scoreElem.GetSingle();
+                scoredList.Add((idx, score));
+            }
+
+            // 按分数降序排序，返回文档和分数
             var resultList = new List<(T, float)>();
-            for (int i = 0; i < Math.Min(documents.Count, scores.Count); i++)
+            foreach (var pair in scoredList.OrderByDescending(x => x.Score))
             {
-                resultList.Add((documents[i], scores[i]));
+                int idx = pair.Index;
+                float score = pair.Score;
+                if (idx >= 0 && idx < documents.Count)
+                    resultList.Add((documents[idx], score));
             }
 
-            // 按分数降序排序
-            resultList.Sort((a, b) => b.Item2.CompareTo(a.Item2));
             return resultList;
         }
 
