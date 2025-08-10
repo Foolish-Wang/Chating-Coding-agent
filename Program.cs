@@ -50,8 +50,19 @@ namespace SemanticKernelAgent
                 }
 
                 // 选择是否启用RAG
-                Console.WriteLine("是否启用知识库增强（RAG）？(y/n): ");
-                var useRag = Console.ReadLine()?.Trim().ToLower() == "y";
+                string ragChoice;
+                while (true)
+                {
+                    Console.WriteLine("是否启用知识库增强（RAG）？(y/n): ");
+                    ragChoice = Console.ReadLine()?.Trim().ToLower();
+                    if (ragChoice == "y" || ragChoice == "n" || ragChoice == "exit")
+                        break;
+                    Console.WriteLine("❌ 无效选择，请输入 y、n 或 exit");
+                }
+                if (ragChoice == "exit")
+                    Environment.Exit(0);
+
+                bool useRag = ragChoice == "y";
                 RagService ragService = null;
                 if (useRag)
                 {

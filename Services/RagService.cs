@@ -64,7 +64,7 @@ namespace SemanticKernelAgent.Services
                 }
             }
 
-            Console.WriteLine("✅ 文档处理与向量化测试完成");
+            Console.WriteLine("✅ 文档处理与向量化完成");
 
             // 查询 topK
             var topKStr = Environment.GetEnvironmentVariable("SEARCH_TOP_K");

@@ -52,12 +52,12 @@ namespace SemanticKernelAgent.Services
 
                 Console.WriteLine($"✅ 分块完成: {chunks.Count} 个块, 耗时: {stopwatch.ElapsedMilliseconds}ms");
                 
-                // 显示块大小分布
-                for (int i = 0; i < chunks.Count; i++)
-                {
-                    var chunk = chunks[i];
-                    Console.WriteLine($"  块 {i + 1}: 位置 {chunk.StartPosition}-{chunk.EndPosition}, 长度 {chunk.CharacterCount}");
-                }
+                // // 显示块大小分布
+                // for (int i = 0; i < chunks.Count; i++)
+                // {
+                //     var chunk = chunks[i];
+                //     Console.WriteLine($"  块 {i + 1}: 位置 {chunk.StartPosition}-{chunk.EndPosition}, 长度 {chunk.CharacterCount}");
+                // }
 
                 return result;
             }

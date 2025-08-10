@@ -85,6 +85,18 @@ namespace SemanticKernelAgent.Services
                     resultList.Add((documents[idx], score));
             }
 
+            // 新增：打印重排后获取的文档块数量及每个文档块的开头和结尾
+            int topM = 3; // 或通过参数传入
+            Console.WriteLine($"[RerankService] 重排后共获取到 {resultList.Count} 个文档块，实际取前 {topM} 个用于拼接。");
+            for (int i = 0; i < Math.Min(topM, resultList.Count); i++)
+            {
+                var (doc, score) = resultList[i];
+                string content = GetDocumentContent(doc);
+                string start = content.Length > 30 ? content.Substring(0, 30) : content;
+                string end = content.Length > 30 ? content.Substring(content.Length - 30) : content;
+                Console.WriteLine($"[{i + 1}] 分数: {score:0.0000} 开头: {start} ... 结尾: {end}");
+            }
+
             return resultList;
         }
 
