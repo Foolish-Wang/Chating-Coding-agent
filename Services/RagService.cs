@@ -1,57 +1,33 @@
-using Microsoft.SemanticKernel;
 using System;
 using System.Collections.Generic;
-using System.ComponentModel;
 using System.Linq;
 using System.Threading.Tasks;
-using SemanticKernelAgent.Services;
 using SkAgent.Services;
 
-namespace SemanticKernelAgent.Plugins
+namespace SemanticKernelAgent.Services
 {
-    /// <summary>
-    /// RAG 插件
-    /// </summary>
-    public class RagPlugin
+    public class RagService
     {
-        // TODO: 实现 RAG 相关的插件功能
+        private readonly DocumentProcessor _processor = new DocumentProcessor();
+        private readonly DocumentChunker _chunker = new DocumentChunker();
+        private readonly OllamaEmbeddingService _embedder = new OllamaEmbeddingService();
+        private readonly QdrantVectorStoreService _qdrant;
+        private readonly RerankService _reranker = new RerankService();
 
-        [KernelFunction, Description("搜索知识库相关内容")]
-        public async Task<string> SearchKnowledgeBase(
-            [Description("搜索查询")] string query,
-            [Description("返回结果数量")] int limit = 5)
+        public RagService()
         {
-            // TODO: 实现知识库搜索功能
-            await Task.Delay(100);
-            return $"搜索结果: {query}";
-        }
-
-        [KernelFunction, Description("向知识库添加文档")]
-        public async Task<string> AddDocumentToKnowledgeBase(
-            [Description("文档内容")] string content,
-            [Description("文档标题")] string title = "")
-        {
-            // TODO: 实现文档添加功能
-            await Task.Delay(100);
-            return "文档已添加到知识库";
+            var collectionName = "sk_agent_knowledge_base";
+            var vectorSize = 1024;
+            _qdrant = new QdrantVectorStoreService("localhost", 6334, collectionName, vectorSize);
         }
 
         public async Task RunAsync()
         {
             Console.WriteLine("📄 文档加载 + 分块 + 向量化测试开始");
 
-            var processor = new DocumentProcessor();
-            var chunker = new DocumentChunker();
-            var embedder = new OllamaEmbeddingService();
-            string query = "夏亚驾驶哪个机动战士踢中了大黄蜂？";
+            await _qdrant.EnsureCollectionAsync();
 
-            var collectionName = "sk_agent_knowledge_base";
-            var vectorSize = 1024;
-            var qdrant = new QdrantVectorStoreService("localhost", 6334, collectionName, vectorSize);
-
-            await qdrant.EnsureCollectionAsync();
-
-            var documents = await processor.LoadKnowledgeBaseDocumentsAsync();
+            var documents = await _processor.LoadKnowledgeBaseDocumentsAsync();
             if (documents == null || documents.Count == 0)
             {
                 Console.WriteLine("⚠️ 未找到任何文档，跳过流程");
@@ -62,7 +38,7 @@ namespace SemanticKernelAgent.Plugins
 
             foreach (var doc in documents)
             {
-                var chunkResult = chunker.ChunkDocument(doc);
+                var chunkResult = _chunker.ChunkDocument(doc);
                 if (!chunkResult.Success || chunkResult.Chunks == null || chunkResult.Chunks.Count == 0)
                 {
                     Console.WriteLine("⚠️ 分块结果为空，跳过此文档");
@@ -71,13 +47,13 @@ namespace SemanticKernelAgent.Plugins
 
                 foreach (var chunk in chunkResult.Chunks)
                 {
-                    var vector = await embedder.EmbedAsync(chunk.Content);
+                    var vector = await _embedder.EmbedAsync(chunk.Content);
                 }
 
                 try
                 {
                     var items = chunkResult.Chunks.Select(chunk => (Category: doc.FileName, Text: chunk.Content));
-                    await qdrant.InsertTextsAsync(items, text => embedder.EmbedAsync(text).Result);
+                    await _qdrant.InsertTextsAsync(items, text => _embedder.EmbedAsync(text).Result);
                 }
                 catch (Exception ex)
                 {
@@ -93,9 +69,12 @@ namespace SemanticKernelAgent.Plugins
             if (!string.IsNullOrWhiteSpace(topKStr) && int.TryParse(topKStr, out var k))
                 topK = k;
 
+            Console.WriteLine("请输入检索问题：");
+            var query = Console.ReadLine();
+
             Console.WriteLine($"🔍 查询：{query}，返回前{topK}个文档块");
 
-            var searchResults = await qdrant.SearchAsync(query, text => embedder.EmbedAsync(text).Result, topK);
+            var searchResults = await _qdrant.SearchAsync(query, text => _embedder.EmbedAsync(text).Result, topK);
 
             int rank = 1;
             foreach (var (score, category, text) in searchResults)
@@ -114,8 +93,7 @@ namespace SemanticKernelAgent.Plugins
                 .Select(r => new { Category = r.Category, Content = r.Text })
                 .ToList();
 
-            var reranker = new RerankService();
-            var rerankResults = await reranker.RerankAsync(query, docBlocks);
+            var rerankResults = await _reranker.RerankAsync(query, docBlocks);
 
             Console.WriteLine($"🔝 Rerank后Top{topM}文档块：");
             for (int i = 0; i < Math.Min(topM, rerankResults.Count); i++)

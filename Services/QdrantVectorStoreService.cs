@@ -13,7 +13,7 @@ namespace SkAgent.Services
         private readonly string _collectionName;
         private readonly int _vectorSize;
 
-        public QdrantVectorStoreService(string host = "localhost", int port = 6334, string collectionName = "text_embedding", int vectorSize = 1536)
+        public QdrantVectorStoreService(string host = "localhost", int port = 6334, string collectionName = "text_embedding", int vectorSize = 1024)
         {
             _client = new QdrantClient(host, port);
             _collectionName = collectionName;
