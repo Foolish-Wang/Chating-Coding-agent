@@ -32,7 +32,7 @@ namespace SemanticKernelAgent
                 var validationConfig = new ValidationConfig
                 {
                     ApiKey = Environment.GetEnvironmentVariable("GEMINI_API_KEY"),
-                    ModelId = Environment.GetEnvironmentVariable("GEMINI_MODEL_ID"), 
+                    ModelId = Environment.GetEnvironmentVariable("GEMINI_MODEL_ID"),
                     UseGemini = true
                 };
 
@@ -49,10 +49,24 @@ namespace SemanticKernelAgent
                     Console.WriteLine("✅ 验证Agent将使用Gemini API");
                 }
 
+                // 选择是否启用RAG
+                Console.WriteLine("是否启用知识库增强（RAG）？(y/n): ");
+                var useRag = Console.ReadLine()?.Trim().ToLower() == "y";
+                RagService ragService = null;
+                if (useRag)
+                {
+                    ragService = new RagService();
+                    Console.WriteLine("RAG功能已启用。");
+                }
+                else
+                {
+                    Console.WriteLine("未启用RAG功能。");
+                }
+
                 // 创建Agent
                 var mainAgent = new MainAgent(config);
                 ValidationAgent validationAgent = null;
-                
+
                 if (validationConfig != null)
                 {
                     validationAgent = new ValidationAgent(config, validationConfig);
@@ -63,8 +77,8 @@ namespace SemanticKernelAgent
                 if (validationAgent != null)
                 {
                     coordinator = new MultiAgentCoordinator(
-                        mainAgent.GetKernel(), 
-                        validationAgent, 
+                        mainAgent.GetKernel(),
+                        validationAgent,
                         mainAgent.GetChatHistory());
                 }
 
@@ -83,7 +97,7 @@ namespace SemanticKernelAgent
                 var useMultiAgent = await SelectModeAsync(validationAgent != null);
 
                 // 聊天循环
-                await StartChatLoopAsync(mainAgent, coordinator, executionSettings, useMultiAgent);
+                await StartChatLoopAsync(mainAgent, coordinator, executionSettings, useMultiAgent, useRag, ragService);
             }
             catch (Exception ex)
             {
@@ -98,7 +112,7 @@ namespace SemanticKernelAgent
             while (true)
             {
                 Console.WriteLine("\n请选择运行模式：");
-                
+
                 if (hasValidationAgent)
                 {
                     Console.WriteLine("1. 多Agent模式（主Agent + 验证Agent）");
@@ -107,16 +121,16 @@ namespace SemanticKernelAgent
                 {
                     Console.WriteLine("1. 多Agent模式（不可用 - 缺少验证Agent）");
                 }
-                
+
                 Console.WriteLine("2. 单Agent模式（仅主Agent）");
                 Console.WriteLine("输入 'exit' 退出程序");
                 Console.Write("选择模式 (1/2): ");
-                
+
                 var choice = Console.ReadLine();
-                
+
                 if (string.IsNullOrEmpty(choice) || choice.ToLower() == "exit")
                     Environment.Exit(0);
-                
+
                 if (choice == "1" && hasValidationAgent)
                 {
                     Console.WriteLine("🔄 使用多Agent模式");
@@ -139,7 +153,13 @@ namespace SemanticKernelAgent
             }
         }
 
-        private static async Task StartChatLoopAsync(MainAgent mainAgent, MultiAgentCoordinator coordinator, OpenAIPromptExecutionSettings settings, bool useMultiAgent)
+        private static async Task StartChatLoopAsync(
+            MainAgent mainAgent,
+            MultiAgentCoordinator coordinator,
+            OpenAIPromptExecutionSettings settings,
+            bool useMultiAgent,
+            bool useRag,
+            RagService ragService)
         {
             Console.WriteLine("\n💡 提示：输入 'reload-prompt' 重新加载系统提示，输入 'exit' 退出\n");
 
@@ -147,8 +167,8 @@ namespace SemanticKernelAgent
             {
                 Console.Write("User > ");
                 var input = Console.ReadLine();
-                
-                if (string.IsNullOrEmpty(input) || input.ToLower() == "exit") 
+
+                if (string.IsNullOrEmpty(input) || input.ToLower() == "exit")
                     break;
 
                 if (input.ToLower() == "reload-prompt")
@@ -156,14 +176,24 @@ namespace SemanticKernelAgent
                     await ReloadPromptsAsync(mainAgent, coordinator, useMultiAgent);
                     continue;
                 }
-                
+
                 try
                 {
                     Console.WriteLine("Processing your request...");
-                    
+
+                    string finalInput = input;
+                    if (useRag && ragService != null)
+                    {
+                        var ragContent = await ragService.RunAsync(input); // 传入query
+                        if (!string.IsNullOrWhiteSpace(ragContent))
+                        {
+                            finalInput = $"{input}\n\n【知识库补充内容】\n{ragContent}";
+                        }
+                    }
+
                     string response = useMultiAgent && coordinator != null
-                        ? await coordinator.ProcessTaskWithValidationAsync(input, settings)
-                        : await mainAgent.ProcessUserInputAsync(input, settings);
+                        ? await coordinator.ProcessTaskWithValidationAsync(finalInput, settings)
+                        : await mainAgent.ProcessUserInputAsync(finalInput, settings);
 
                     Console.WriteLine($"AI > {response}");
                     Console.WriteLine("\n--- 任务完成，准备好接受下一个命令 ---\n");
@@ -181,10 +211,10 @@ namespace SemanticKernelAgent
             {
                 Console.WriteLine("🔄 重新加载系统提示...");
                 await mainAgent.ReloadSystemPromptAsync();
-                
+
                 if (useMultiAgent && coordinator != null)
                     await coordinator.ReloadValidationPromptAsync();
-                
+
                 Console.WriteLine("✅ 系统提示已重新加载");
             }
             catch (Exception ex)

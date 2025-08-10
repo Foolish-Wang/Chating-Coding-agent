@@ -24,7 +24,7 @@ namespace SemanticKernelAgent.Services
         /// <summary>
         /// 执行RAG流程，返回拼接后的大文档块
         /// </summary>
-        public async Task<string> RunAsync()
+        public async Task<string> RunAsync(string query)
         {
             Console.WriteLine("📄 文档加载 + 分块 + 向量化测试开始");
 
@@ -72,19 +72,7 @@ namespace SemanticKernelAgent.Services
             if (!string.IsNullOrWhiteSpace(topKStr) && int.TryParse(topKStr, out var k))
                 topK = k;
 
-            Console.WriteLine("请输入检索问题：");
-            var query = Console.ReadLine();
-
-            Console.WriteLine($"🔍 查询：{query}，返回前{topK}个文档块");
-
             var searchResults = await _qdrant.SearchAsync(query, text => _embedder.EmbedAsync(text).Result, topK);
-
-            int rank = 1;
-            foreach (var (score, category, text) in searchResults)
-            {
-                Console.WriteLine($"{rank}. 相似度: {score:0.0000} 文档: {category} 内容: {text}");
-                rank++;
-            }
 
             // rerank
             var topMStr = Environment.GetEnvironmentVariable("SEARCH_RERANK_TOP_M");
@@ -98,7 +86,6 @@ namespace SemanticKernelAgent.Services
 
             var rerankResults = await _reranker.RerankAsync(query, docBlocks);
 
-            Console.WriteLine($"🔝 Rerank后Top{topM}文档块：");
             var mergedContent = "";
             for (int i = 0; i < Math.Min(topM, rerankResults.Count); i++)
             {
